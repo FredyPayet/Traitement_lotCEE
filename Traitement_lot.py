@@ -207,7 +207,7 @@ def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list) -> 
 
     corps = {
         "Taux OK": (
-            f"Bonjour,\n\n\n"
+            f"Bonjour,\n\n"
             f"Pour votre information, nous avons reçu le retour du lot de contrôle {lot_label}.\n\n"
             f"Tous les taux réglementaires sont respectés. Toutes les opérations du lot relatif "
             f"à la fiche travaux peuvent être finalisées.\n\n"
@@ -217,7 +217,7 @@ def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list) -> 
             f"Cordialement,"
         ),
         "Taux NS KO": (
-            f"Bonjour,\n\n\n"
+            f"Bonjour,\n\n"
             f"Pour votre information, nous avons reçu le retour du lot de contrôle {lot_label}.\n\n"
             f"Le taux d'opérations contrôlées non satisfaisantes dépasse les 10 %. "
             f"Nous ne pouvons finaliser que les opérations qui ont été contrôlées. "
@@ -228,7 +228,7 @@ def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list) -> 
             f"Cordialement,"
         ),
         "Tous taux KO": (
-            f"Bonjour,\n\n\n"
+            f"Bonjour,\n\n"
             f"Pour votre information, nous avons reçu le retour du lot de contrôle {lot_label}.\n\n"
             f"Les taux réglementaires ne sont pas atteints. Nous ne pouvons finaliser aucune opération "
             f"dans ce lot. Les opérations doivent être représentées dans un nouveau lot.\n\n"
