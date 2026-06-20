@@ -196,7 +196,7 @@ def get_ns_adresses(df_client: pd.DataFrame) -> list:
     return adresses
 
 
-def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list, lot_destination: str = "") -> str:
+def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list, lot_destination: str = "", delais_courts: bool = False) -> str:
     bloc_ns = ""
     if ns_adresses_causes:
         lignes = []
@@ -210,9 +210,13 @@ def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list, lot
 
     bloc_destination = ""
     if lot_destination.strip():
-        bloc_destination = f"\n\nLes opérations concernées devront être représentées dans le lot de destination suivant : {lot_destination.strip()}.\n\n"
+        bloc_destination = f"\n\nLes opérations concernées devront être représentées dans le lot de destination suivant : {lot_destination.strip()}."
 
-    fin = f"{bloc_destination}Cordialement,"
+    bloc_delais = ""
+    if delais_courts:
+        bloc_delais = "\n\nLa date de fin de travaux est inférieure à 3 mois. Nous ne pouvons plus intégrer le dossier dans un nouveau lot de contrôle pour validation. Merci de nous fournir un document du marché permettant de repousser cette date, ou de nous confirmer l'annulation du dossier."
+
+    fin = f"{bloc_destination}{bloc_delais}\n\nCordialement,"
 
     corps = {
         "Taux OK": (
@@ -373,6 +377,12 @@ if uploaded:
                         key=dest_key,
                     )
 
+                delais_key = f"delais_{client}"
+                delais_courts = st.checkbox(
+                    "⏳ Délai restant pour contrôle < 3 mois",
+                    key=delais_key,
+                )
+
                 filename = build_filename(client, num_dossier, num_lot)
 
                 st.markdown("---")
@@ -415,7 +425,7 @@ if uploaded:
                     st.markdown("---")
 
                 # ── Message automatique ──────────────────────────────────────
-                message = build_message(taux_choix, lot_label, ns_adresses_causes, lot_destination)
+                message = build_message(taux_choix, lot_label, ns_adresses_causes, lot_destination, delais_courts)
 
                 st.markdown("**✉️ Message à envoyer au client :**")
                 st.markdown(
