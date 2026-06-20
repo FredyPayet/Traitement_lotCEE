@@ -459,13 +459,20 @@ if uploaded:
     st.markdown("---")
     st.subheader("📋 Informations du lot")
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
         num_lot = st.text_input("Numéro de lot", placeholder="ex : LOT-2024-001")
     with col2:
         taux_choix = st.selectbox(
             "Résultat du lot",
             options=["Taux OK", "Taux NS KO", "Tous taux KO"],
+        )
+    with col3:
+        fiches_dispo = sorted(NS_REF.keys())
+        fiche_globale = st.selectbox(
+            "Fiche CEE du lot",
+            options=fiches_dispo,
+            key="fiche_globale",
         )
 
     st.markdown("---")
@@ -567,21 +574,9 @@ if uploaded:
 
                         st.markdown(f"📍 **{adresse}**")
 
-                        # Sélection de la fiche CEE
-                        fiches_dispo = sorted(NS_REF.keys()) if NS_REF else []
-                        fiche_default_idx = fiches_dispo.index(fiche) if fiche in fiches_dispo else 0
-
-                        fiche_sel = st.selectbox(
-                            "Fiche CEE",
-                            options=fiches_dispo if fiches_dispo else ["Référentiel non trouvé"],
-                            index=fiche_default_idx,
-                            key=f"fiche_sel_{client}_{i}",
-                        )
-
-                        # Liste des NC disponibles pour cette fiche
-                        nc_list = []
-                        if fiche_sel in NS_REF:
-                            nc_list = list(NS_REF[fiche_sel].keys())
+                        # Utilise la fiche CEE sélectionnée globalement
+                        fiche_sel = fiche_globale
+                        nc_list = list(NS_REF.get(fiche_sel, {}).keys())
 
                         # Clé session_state pour le nombre de NC sélectionnées
                         count_key = f"nc_count_{client}_{i}"
