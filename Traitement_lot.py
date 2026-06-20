@@ -23,17 +23,16 @@ COL_LABELS = {
     "G": "Code postal",
     "H": "Ville",
     "I": "Raison sociale bénéficiaire",
-    "BS": "Conclusion du contrôle sur site",
-    "BY": "Conclusion du contrôle par contact",
+    "BS": "Conclusion de l'audit",
+    "BY": "Conformité après correction",
 }
 
-# ─── Couleurs Excel ──────────────────────────────────────────────────────────
 COLORS = {
-    "satisfaisant":    "C6EFCE",
-    "non_satisfaisant":"FFCCCC",
-    "inaccessible":    "FFE0B2",
-    "non_visite":      "E0E0E0",
-    "header":          "2F5496",
+    "satisfaisant":     "C6EFCE",
+    "non_satisfaisant": "FFCCCC",
+    "inaccessible":     "FFE0B2",
+    "non_visite":       "E0E0E0",
+    "header":           "2F5496",
 }
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
@@ -120,15 +119,24 @@ def get_cell_color(value: str):
     return None
 
 
-def build_client_excel(df_client: pd.DataFrame, client_name: str) -> bytes:
+def build_client_excel(df_client: pd.DataFrame, client_name: str, lot_destination: str = "") -> bytes:
     wb = Workbook()
     ws = wb.active
     ws.title = client_name[:31]
 
     col_keys = ["D", "E", "F", "G", "H", "I", "BS", "BY"]
     headers = [COL_LABELS[k] for k in col_keys]
-    bs_col_idx = col_keys.index("BS") + 1
-    by_col_idx = col_keys.index("BY") + 1
+
+    # Ajout colonne "Nouveau lot de contrôle" si lot_destination renseigné
+    if lot_destination:
+        col_keys_ext = col_keys + ["LOT_DEST"]
+        headers_ext = headers + ["Nouveau lot de contrôle"]
+    else:
+        col_keys_ext = col_keys
+        headers_ext = headers
+
+    bs_col_idx = col_keys_ext.index("BS") + 1
+    by_col_idx = col_keys_ext.index("BY") + 1
 
     thin = Side(style="thin", color="000000")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
@@ -138,7 +146,7 @@ def build_client_excel(df_client: pd.DataFrame, client_name: str) -> bytes:
     cell_align = Alignment(vertical="center", wrap_text=True)
 
     ws.row_dimensions[1].height = 40
-    for col_num, header in enumerate(headers, 1):
+    for col_num, header in enumerate(headers_ext, 1):
         cell = ws.cell(row=1, column=col_num, value=header)
         cell.font = header_font
         cell.fill = header_fill
@@ -147,8 +155,8 @@ def build_client_excel(df_client: pd.DataFrame, client_name: str) -> bytes:
 
     for row_num, (_, row) in enumerate(df_client.iterrows(), 2):
         ws.row_dimensions[row_num].height = 20
-        for col_num, key in enumerate(col_keys, 1):
-            val = row[key]
+        for col_num, key in enumerate(col_keys_ext, 1):
+            val = lot_destination if key == "LOT_DEST" else row[key]
             cell = ws.cell(row=row_num, column=col_num, value=val)
             cell.alignment = cell_align
             cell.border = border
@@ -158,7 +166,7 @@ def build_client_excel(df_client: pd.DataFrame, client_name: str) -> bytes:
                 if color:
                     cell.fill = PatternFill("solid", fgColor=color)
 
-    col_widths = [20, 30, 35, 12, 20, 35, 30, 25]
+    col_widths = [20, 30, 35, 12, 20, 35, 30, 25] + ([25] if lot_destination else [])
     for i, width in enumerate(col_widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = width
 
@@ -167,14 +175,14 @@ def build_client_excel(df_client: pd.DataFrame, client_name: str) -> bytes:
     return buf.getvalue()
 
 
-def build_filename(client_name: str, num_lot: str) -> str:
+def build_filename(client_name: str, num_dossier: str, num_lot: str) -> str:
     name = sanitize_filename(client_name)[:50]
+    dossier = sanitize_filename(num_dossier.strip()) if num_dossier.strip() else "sans_dossier"
     lot = sanitize_filename(num_lot.strip()) if num_lot.strip() else "lot_non_renseigné"
-    return f"{name}_Résultat du {lot}.xlsx"
+    return f"{name}_{dossier}_{lot}.xlsx"
 
 
 def get_ns_adresses(df_client: pd.DataFrame) -> list:
-    """Retourne la liste des adresses (col F + G + H) dont BS = non satisfaisant."""
     ns_rows = df_client[df_client["BS"].str.lower().str.contains("non satisfaisant", na=False)]
     adresses = []
     for _, row in ns_rows.iterrows():
@@ -188,12 +196,7 @@ def get_ns_adresses(df_client: pd.DataFrame) -> list:
     return adresses
 
 
-def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list) -> str:
-    """
-    Construit le message final.
-    ns_adresses_causes : liste de tuples (adresse, [cause1, cause2, ...])
-    """
-    # Bloc adresses NS (inséré après 'Vous trouverez ci-joint...')
+def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list, lot_destination: str = "") -> str:
     bloc_ns = ""
     if ns_adresses_causes:
         lignes = []
@@ -205,19 +208,25 @@ def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list) -> 
                     lignes.append(f"\t• {c}")
         bloc_ns = "\n\n" + "\n".join(lignes)
 
+    bloc_destination = ""
+    if lot_destination.strip():
+        bloc_destination = f"\n\nLes opérations concernées devront être représentées dans le lot de destination suivant : {lot_destination.strip()}.\n\n"
+
+    fin = f"{bloc_destination}Cordialement,"
+
     corps = {
         "Taux OK": (
-            f"Bonjour,\n\n"
+            f"Bonjour,\n\n\n"
             f"Pour votre information, nous avons reçu le retour du lot de contrôle {lot_label}.\n\n"
             f"Tous les taux réglementaires sont respectés. Toutes les opérations du lot relatif "
             f"à la fiche travaux peuvent être finalisées.\n\n"
             f"Vous trouverez ci-joint les résultats de contrôles pour vos opérations."
             f"{bloc_ns}\n\n"
             f"Les rapports de contrôle sont disponibles sur ODICEE, si vos opérations ont été contrôlées.\n\n"
-            f"Cordialement,"
+            f"{fin}"
         ),
         "Taux NS KO": (
-            f"Bonjour,\n\n"
+            f"Bonjour,\n\n\n"
             f"Pour votre information, nous avons reçu le retour du lot de contrôle {lot_label}.\n\n"
             f"Le taux d'opérations contrôlées non satisfaisantes dépasse les 10 %. "
             f"Nous ne pouvons finaliser que les opérations qui ont été contrôlées. "
@@ -225,17 +234,17 @@ def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list) -> 
             f"Vous trouverez ci-joint les résultats de contrôles pour vos opérations."
             f"{bloc_ns}\n\n"
             f"Les rapports de contrôle sont disponibles sur ODICEE, si vos opérations ont été contrôlées.\n\n"
-            f"Cordialement,"
+            f"{fin}"
         ),
         "Tous taux KO": (
-            f"Bonjour,\n\n"
+            f"Bonjour,\n\n\n"
             f"Pour votre information, nous avons reçu le retour du lot de contrôle {lot_label}.\n\n"
             f"Les taux réglementaires ne sont pas atteints. Nous ne pouvons finaliser aucune opération "
             f"dans ce lot. Les opérations doivent être représentées dans un nouveau lot.\n\n"
             f"Vous trouverez ci-joint les résultats de contrôles pour vos opérations."
             f"{bloc_ns}\n\n"
             f"Les rapports de contrôle sont disponibles sur ODICEE, si vos opérations ont été contrôlées.\n\n"
-            f"Cordialement,"
+            f"{fin}"
         ),
     }
     return corps[taux_choix]
@@ -286,12 +295,10 @@ if uploaded:
     st.markdown("---")
     st.subheader("📋 Informations du lot")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     with col1:
         num_lot = st.text_input("Numéro de lot", placeholder="ex : LOT-2024-001")
     with col2:
-        num_dossier = st.text_input("Numéro de dossier(s)", placeholder="ex : DOS-001")
-    with col3:
         taux_choix = st.selectbox(
             "Résultat du lot",
             options=["Taux OK", "Taux NS KO", "Tous taux KO"],
@@ -311,14 +318,20 @@ if uploaded:
     st.sidebar.header("Filtres & Export")
     selected = st.sidebar.multiselect("Clients à afficher", options=clients, default=clients)
 
-    # ZIP — tous les clients
+    # ZIP — tous les clients (utilise dossier vide par défaut pour le ZIP global)
     if st.sidebar.button("⬇️ Télécharger tous les fichiers (ZIP)"):
         zip_buf = io.BytesIO()
         with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
             for client in clients:
                 df_c = data[data["I"] == client].copy()
-                xlsx_bytes = build_client_excel(df_c, client)
-                fname = build_filename(client, num_lot)
+                # Récupérer dossier et lot_destination depuis session_state si disponibles
+                dossier_key = f"dossier_{client}"
+                dest_active_key = f"dest_active_{client}"
+                dest_key = f"lot_dest_{client}"
+                num_dossier_c = st.session_state.get(dossier_key, "")
+                lot_dest_c = st.session_state.get(dest_key, "") if st.session_state.get(dest_active_key, False) else ""
+                xlsx_bytes = build_client_excel(df_c, client, lot_dest_c)
+                fname = build_filename(client, num_dossier_c, num_lot)
                 zf.writestr(fname, xlsx_bytes)
         st.sidebar.download_button(
             label="📦 Télécharger le ZIP",
@@ -333,9 +346,36 @@ if uploaded:
     else:
         for client in selected:
             df_client = data[data["I"] == client].copy().reset_index(drop=True)
-            filename = build_filename(client, num_lot)
 
             with st.expander(f"🏢 {client}  ({len(df_client)} opération(s))", expanded=True):
+
+                # ── Numéro de dossier par client ─────────────────────────────
+                dossier_key = f"dossier_{client}"
+                num_dossier = st.text_input(
+                    "Numéro de dossier(s)",
+                    placeholder="ex : DOS-001",
+                    key=dossier_key,
+                )
+
+                # ── Lot de destination ───────────────────────────────────────
+                dest_active_key = f"dest_active_{client}"
+                dest_key = f"lot_dest_{client}"
+
+                activer_destination = st.checkbox(
+                    "Spécifier un lot de destination",
+                    key=dest_active_key,
+                )
+                lot_destination = ""
+                if activer_destination:
+                    lot_destination = st.text_input(
+                        "Lot de destination",
+                        placeholder="ex : LOT-2024-002",
+                        key=dest_key,
+                    )
+
+                filename = build_filename(client, num_dossier, num_lot)
+
+                st.markdown("---")
 
                 # ── Saisie des causes NS ─────────────────────────────────────
                 ns_adresses = get_ns_adresses(df_client)
@@ -345,7 +385,6 @@ if uploaded:
                     st.markdown("**⚠️ Opérations non satisfaisantes — saisir les non-conformités :**")
 
                     for i, adresse in enumerate(ns_adresses):
-                        # Clé session_state pour le nombre de champs de cette adresse
                         count_key = f"nc_count_{client}_{i}"
                         if count_key not in st.session_state:
                             st.session_state[count_key] = 1
@@ -357,14 +396,13 @@ if uploaded:
                             col_input, col_btn = st.columns([10, 1])
                             with col_input:
                                 val = st.text_input(
-                                    f"• Non-conformité {j + 1}",
+                                    f"nc_{client}_{i}_{j}",
                                     placeholder="ex : Épaisseur insuffisante",
                                     key=f"nc_{client}_{i}_{j}",
                                     label_visibility="collapsed",
                                 )
                                 if val.strip():
                                     causes.append(val.strip())
-                            # Bouton + uniquement sur la dernière ligne
                             if j == st.session_state[count_key] - 1:
                                 with col_btn:
                                     if st.button("➕", key=f"add_{client}_{i}_{j}", help="Ajouter une non-conformité"):
@@ -377,7 +415,7 @@ if uploaded:
                     st.markdown("---")
 
                 # ── Message automatique ──────────────────────────────────────
-                message = build_message(taux_choix, lot_label, ns_adresses_causes)
+                message = build_message(taux_choix, lot_label, ns_adresses_causes, lot_destination)
 
                 st.markdown("**✉️ Message à envoyer au client :**")
                 st.markdown(
@@ -391,7 +429,7 @@ if uploaded:
                 st.markdown("---")
 
                 # ── Export Excel ─────────────────────────────────────────────
-                xlsx_bytes = build_client_excel(df_client, client)
+                xlsx_bytes = build_client_excel(df_client, client, lot_destination)
                 st.download_button(
                     label=f"⬇️ Télécharger Excel — {filename}",
                     data=xlsx_bytes,
