@@ -525,25 +525,44 @@ def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list, lot
     return corps[taux_choix]
 
 
-def copy_button(text: str, key: str):
-    escaped = text.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
+def copy_and_download_button(text: str, xlsx_bytes: bytes, filename: str, client_name: str, key: str):
+    """Bouton unique : copie le message ET déclenche le téléchargement du fichier Excel."""
+    import base64
+    escaped   = text.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
+    b64_xlsx  = base64.b64encode(xlsx_bytes).decode("utf-8")
+    safe_name = filename.replace("'", "\'")
+    label     = f"📋 Copier le message et télécharger les résultats de {client_name}"
+
     st.components.v1.html(
         f"""
-        <button onclick="
+        <button id="btn_{key}" onclick="
+            // Copie du message
             navigator.clipboard.writeText(`{escaped}`)
-            .then(() => {{
-                this.innerText = '✅ Copié !';
-                setTimeout(() => this.innerText = '📋 Copier le message', 2000);
-            }})
-            .catch(() => alert('Copie impossible, utilisez Ctrl+C'));
+            .catch(() => {{}});
+
+            // Téléchargement Excel
+            const bytes = atob('{b64_xlsx}');
+            const arr   = new Uint8Array(bytes.length);
+            for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+            const blob  = new Blob([arr], {{type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}});
+            const url   = URL.createObjectURL(blob);
+            const a     = document.createElement('a');
+            a.href      = url;
+            a.download  = '{safe_name}';
+            a.click();
+            URL.revokeObjectURL(url);
+
+            // Feedback visuel
+            this.innerText = '✅ Copié et téléchargé !';
+            setTimeout(() => this.innerText = `{label}`, 3000);
         "
         style="
-            background-color:#4CAF50; color:white; border:none;
-            padding:8px 18px; border-radius:6px; font-size:14px;
-            cursor:pointer; font-family:Arial,sans-serif;
-        ">📋 Copier le message</button>
+            background-color:#2F5496; color:white; border:none;
+            padding:10px 20px; border-radius:6px; font-size:14px;
+            cursor:pointer; font-family:Arial,sans-serif; width:100%;
+        ">{label}</button>
         """,
-        height=45,
+        height=55,
     )
 
 
@@ -796,15 +815,5 @@ if uploaded:
                     f"{message}</div>",
                     unsafe_allow_html=True,
                 )
-                copy_button(message, key=f"copy_{client}")
-
-                st.markdown("---")
-
                 xlsx_bytes = build_client_excel(df_client, client, lot_destination, fiche_globale)
-                st.download_button(
-                    label=f"⬇️ Télécharger Excel — {filename}",
-                    data=xlsx_bytes,
-                    file_name=filename,
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key=f"dl_{client}",
-                )
+                copy_and_download_button(message, xlsx_bytes, filename, client, key=f"copy_{client}")
