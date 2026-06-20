@@ -216,7 +216,7 @@ if uploaded:
                         return "background-color: #e0e0e0; color: #444;"
                     return ""
 
-                styled = df_client.style.applymap(
+                styled = df_client.style.map(
                     color_conclusion, subset=[COL_LABELS["BS"]]
                 )
 
