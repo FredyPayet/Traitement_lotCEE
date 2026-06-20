@@ -211,6 +211,71 @@ def build_filename(client_name: str, df_client: pd.DataFrame) -> str:
     return f"{name}_{conclusion}_{ref}.xlsx"
 
 
+# ─── Messages automatiques ──────────────────────────────────────────────────
+
+MESSAGES = {
+    "Taux OK": (
+        "Bonjour,\n\n"
+        "Pour votre information, nous avons reçu le retour du lot de contrôle {lot}.\n\n"
+        "Tous les taux réglementaires sont respectés. Toutes les opérations du lot relatif "
+        "à la fiche travaux peuvent être finalisées.\n\n"
+        "Vous trouverez ci-joint les résultats de contrôles pour vos opérations.\n\n"
+        "Les rapports de contrôle sont disponibles sur ODICEE, si vos opérations ont été contrôlées.\n\n"
+        "Cordialement,"
+    ),
+    "Taux NS KO": (
+        "Bonjour,\n\n"
+        "Pour votre information, nous avons reçu le retour du lot de contrôle {lot}.\n\n"
+        "Le taux d'opérations contrôlées non satisfaisantes dépasse les 10 %. "
+        "Nous ne pouvons finaliser que les opérations qui ont été contrôlées. "
+        "Les opérations non visitées doivent être représentées dans un nouveau lot.\n\n"
+        "Vous trouverez ci-joint les résultats de contrôles pour vos opérations.\n\n"
+        "Les rapports de contrôle sont disponibles sur ODICEE, si vos opérations ont été contrôlées.\n\n"
+        "Cordialement,"
+    ),
+    "Tous taux KO": (
+        "Bonjour,\n\n"
+        "Pour votre information, nous avons reçu le retour du lot de contrôle {lot}.\n\n"
+        "Les taux réglementaires ne sont pas atteints. Nous ne pouvons finaliser aucune opération "
+        "dans ce lot. Les opérations doivent être représentées dans un nouveau lot.\n\n"
+        "Vous trouverez ci-joint les résultats de contrôles pour vos opérations.\n\n"
+        "Les rapports de contrôle sont disponibles sur ODICEE, si vos opérations ont été contrôlées.\n\n"
+        "Cordialement,"
+    ),
+}
+
+
+def copy_button(text: str, key: str):
+    """Affiche un bouton qui copie 'text' dans le presse-papiers via JavaScript."""
+    # Échapper les caractères spéciaux pour l'intégration JS
+    escaped = text.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
+    st.components.v1.html(
+        f"""
+        <button onclick="
+            navigator.clipboard.writeText(`{escaped}`)
+            .then(() => {{
+                this.innerText = '✅ Copié !';
+                setTimeout(() => this.innerText = '📋 Copier le message', 2000);
+            }})
+            .catch(() => alert('Copie impossible, utilisez Ctrl+C'));
+        "
+        style="
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 18px;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            font-family: Arial, sans-serif;
+        ">
+        📋 Copier le message
+        </button>
+        """,
+        height=45,
+    )
+
+
 # ─── UI ─────────────────────────────────────────────────────────────────────
 
 uploaded = st.file_uploader(
@@ -229,6 +294,23 @@ if uploaded:
             st.stop()
 
     st.success(f"✅ Fichier chargé — **{len(data)}** ligne(s) · **{len(clients)}** client(s) détecté(s)")
+
+    # ── Informations lot ─────────────────────────────────────────────────────
+    st.markdown("---")
+    st.subheader("📋 Informations du lot")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        num_lot = st.text_input("Numéro de lot", placeholder="ex : LOT-2024-001")
+    with col2:
+        num_dossier = st.text_input("Numéro de dossier(s)", placeholder="ex : DOS-001, DOS-002")
+    with col3:
+        taux_choix = st.selectbox(
+            "Résultat du lot",
+            options=["Taux OK", "Taux NS KO", "Tous taux KO"],
+        )
+
+    st.markdown("---")
 
     # ── Sidebar ─────────────────────────────────────────────────────────────
     st.sidebar.header("Filtres & Export")
@@ -262,7 +344,32 @@ if uploaded:
 
             with st.expander(f"🏢 {client}  ({len(df_client)} opération(s))", expanded=True):
 
-                # Aperçu coloré dans Streamlit
+                # ── Message automatique ──────────────────────────────────────
+                lot_label = num_lot.strip() if num_lot.strip() else "[numéro de lot non renseigné]"
+                message = MESSAGES[taux_choix].format(lot=lot_label)
+
+                st.markdown("**✉️ Message à envoyer au client :**")
+
+                # Couleur du bandeau selon le taux
+                couleur_bandeau = {
+                    "Taux OK":      "#e8f5e9",
+                    "Taux NS KO":   "#fff3e0",
+                    "Tous taux KO": "#ffebee",
+                }[taux_choix]
+
+                st.markdown(
+                    f"<div style='background-color:{couleur_bandeau}; padding:16px; "
+                    f"border-radius:8px; white-space:pre-wrap; font-family:Arial; font-size:14px;'>"
+                    f"{message}</div>",
+                    unsafe_allow_html=True,
+                )
+
+                copy_button(message, key=f"msg_{client}")
+
+                st.markdown("---")
+
+                # ── Tableau des opérations ───────────────────────────────────
+                st.markdown("**📊 Opérations :**")
                 df_display = df_client.rename(columns=COL_LABELS)
 
                 def color_row(row):
