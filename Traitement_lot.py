@@ -168,6 +168,15 @@ NS_REF = {
             "Merci de faire reprendre la facture et de nous la transmettre."
         ),
     },
+    "EN-105": {
+        "Surface": ("", ""),
+        "Epaisseur": ("", ""),
+        "Homogénéité": ("", ""),
+        "Etanchéité": ("", ""),
+        "Ecart au feu": ("", ""),
+        "Non réalisés": ("", ""),
+        "Document": ("", ""),
+    },
 }
 
 # ─── Configuration colonnes par fiche ───────────────────────────────────────
@@ -387,7 +396,7 @@ def detect_fiche(ref: str) -> str | None:
     return m2.group(0).upper() if m2 else None
 
 
-def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list, lot_destination: str = "", delais_courts: bool = False) -> str:
+def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list, lot_destination: str = "", delais_courts: bool = False, tous_non_visites: bool = False) -> str:
     bloc_ns = ""
     if ns_adresses_causes:
         lignes = []
@@ -408,6 +417,8 @@ def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list, lot
 
     fin = f"{bloc_destination}{bloc_delais}\n\nCordialement,"
 
+    odicee = "" if tous_non_visites else "\n\nLes rapports de contrôle sont disponibles sur ODICEE, si vos opérations ont été contrôlées."
+
     corps = {
         "Taux OK": (
             f"Bonjour,\n\n\n"
@@ -415,8 +426,8 @@ def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list, lot
             f"Tous les taux réglementaires sont respectés. Toutes les opérations du lot relatif "
             f"à la fiche travaux peuvent être finalisées.\n\n"
             f"Vous trouverez ci-joint les résultats des contrôles pour vos opérations."
-            f"{bloc_ns}\n\n"
-            f"Les rapports de contrôle sont disponibles sur ODICEE, si vos opérations ont été contrôlées.\n\n"
+            f"{bloc_ns}"
+            f"{odicee}\n\n"
             f"{fin}"
         ),
         "Taux NS KO": (
@@ -426,8 +437,8 @@ def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list, lot
             f"Nous ne pouvons finaliser que les opérations qui ont été contrôlées. "
             f"Les opérations non visitées doivent être représentées dans un nouveau lot.\n\n"
             f"Vous trouverez ci-joint les résultats des contrôles pour vos opérations."
-            f"{bloc_ns}\n\n"
-            f"Les rapports de contrôle sont disponibles sur ODICEE, si vos opérations ont été contrôlées.\n\n"
+            f"{bloc_ns}"
+            f"{odicee}\n\n"
             f"{fin}"
         ),
         "Tous taux KO": (
@@ -436,8 +447,8 @@ def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list, lot
             f"Les taux réglementaires ne sont pas atteints. Nous ne pouvons finaliser aucune opération "
             f"dans ce lot. Les opérations doivent être représentées dans un nouveau lot.\n\n"
             f"Vous trouverez ci-joint les résultats des contrôles pour vos opérations."
-            f"{bloc_ns}\n\n"
-            f"Les rapports de contrôle sont disponibles sur ODICEE, si vos opérations ont été contrôlées.\n\n"
+            f"{bloc_ns}"
+            f"{odicee}\n\n"
             f"{fin}"
         ),
     }
@@ -595,6 +606,9 @@ if uploaded:
                 extra_cols_fiche, _ = get_fiche_extra_cols(fiche_globale)
                 conclusion_col = extra_cols_fiche[0]
                 ns_adresses = get_ns_adresses(df_client, conclusion_col)
+
+                # Vérifier si toutes les opérations sont "non visité"
+                tous_non_visites = df_client[conclusion_col].astype(str).str.lower().str.strip().eq("non visité").all()
                 ns_adresses_causes = []
 
                 if ns_adresses:
@@ -642,7 +656,7 @@ if uploaded:
                     st.markdown("---")
 
                 # ── Message automatique ──────────────────────────────────────
-                message = build_message(taux_choix, lot_label, ns_adresses_causes, lot_destination, delais_courts)
+                message = build_message(taux_choix, lot_label, ns_adresses_causes, lot_destination, delais_courts, tous_non_visites)
 
                 st.markdown("**✉️ Message à envoyer au client :**")
                 st.markdown(
