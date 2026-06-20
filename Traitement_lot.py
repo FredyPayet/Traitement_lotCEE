@@ -110,7 +110,7 @@ NS_REF = {
             "Il a été constaté qu'il n'y a pas d'espace entre le départ de l'isolant et le sol, ce qui peut entraîner des remontées capillaires.",
             "Merci de faire reprendre les travaux et de nous transmettre une attestation de reprise et des photos."
         ),
-        "Qualité non manifeste": (
+        "Non-qualité manifeste": (
             "Il a été observé des non-qualités manifestes des travaux.",
             "Merci de faire reprendre les travaux et de nous transmettre une attestation de reprise et des photos."
         ),
@@ -194,7 +194,7 @@ FICHE_COLS = {
 MESSAGES_INCOMPLET = {
     "AH non reçue": (
         "Nous n'avons pas encore reçu l'attestation sur l'honneur pour les fiches complètes du dossier. "
-        "Vous les trouverez ci-joint. Merci de nous les retourner avec les parties B, C et BS datées, "
+        "Vous les trouverez ci-jointes. Merci de nous les retourner avec les parties B, C et BS datées, "
         "signées et tamponnées. Le document doit nous être transmis en version numérique et originale par voie postale."
     ),
     "Documents non conformes": (
