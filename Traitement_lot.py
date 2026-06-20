@@ -168,15 +168,6 @@ NS_REF = {
             "Merci de faire reprendre la facture et de nous la transmettre."
         ),
     },
-    "EN-105": {
-        "Surface": ("", ""),
-        "Epaisseur": ("", ""),
-        "Homogénéité": ("", ""),
-        "Etanchéité": ("", ""),
-        "Ecart au feu": ("", ""),
-        "Non réalisés": ("", ""),
-        "Document": ("", ""),
-    },
 }
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
