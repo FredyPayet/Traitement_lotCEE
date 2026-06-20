@@ -15,7 +15,6 @@ st.set_page_config(page_title="Traitement des lots CEE contrôles réglementaire
 st.title("📊 Traitement des lots CEE contrôles réglementaires")
 st.markdown("Chargez votre fichier Excel (`.xls` ou `.xlsx`) pour générer automatiquement un fichier Excel par client.")
 
-# ─── Labels colonnes ────────────────────────────────────────────────────────
 COL_LABELS = {
     "D": "Réf. interne",
     "E": "Nom du site",
@@ -34,8 +33,6 @@ COLORS = {
     "non_visite":       "E0E0E0",
     "header":           "2F5496",
 }
-
-# ─── Référentiel NS (intégré directement) ───────────────────────────────────
 
 NS_REF = {
     "EN-101": {
@@ -179,7 +176,6 @@ NS_REF = {
     },
 }
 
-# ─── Configuration colonnes par fiche ───────────────────────────────────────
 FICHE_COLS = {
     "EN-101": {"extra": ["BS", "BY"], "labels": {"BS": "Résultat du contrôle sur site", "BY": "Résultat du contrôle par contact"}},
     "EN-102": {"extra": ["BS", "BY"], "labels": {"BS": "Résultat du contrôle sur site", "BY": "Résultat du contrôle par contact"}},
@@ -194,13 +190,26 @@ FICHE_COLS = {
     "TH-112": {"extra": ["AK"], "labels": {"AK": "Résultat du contrôle par contact"}},
 }
 
+# Messages dossier incomplet
+MESSAGES_INCOMPLET = {
+    "AH non reçue": (
+        "Nous n'avons pas encore reçu l'attestation sur l'honneur pour les fiches complètes du dossier. "
+        "Vous les trouverez ci-joint. Merci de nous les retourner avec les parties B, C et BS datées, "
+        "signées et tamponnées. Le document doit nous être transmis en version numérique et originale par voie postale."
+    ),
+    "Documents non conformes": (
+        "Un document administratif est non conforme. Merci de vous rendre sur le dossier "
+        "et nous fournir les éléments demandés."
+    ),
+}
+
+
 def get_fiche_extra_cols(fiche: str) -> tuple[list, dict]:
     cfg = FICHE_COLS.get(fiche, {"extra": ["BS", "BY"], "labels": {"BS": "Résultat du contrôle sur site", "BY": "Résultat du contrôle par contact"}})
     return cfg["extra"], cfg["labels"]
 
 
 def get_col_by_label(fiche: str, label: str) -> str | None:
-    """Retourne le nom de colonne correspondant à un label pour une fiche donnée."""
     extra_cols, extra_labels = get_fiche_extra_cols(fiche)
     for col, lbl in extra_labels.items():
         if lbl == label:
@@ -209,36 +218,26 @@ def get_col_by_label(fiche: str, label: str) -> str | None:
 
 
 def get_seuils(fiche: str, annee: int) -> dict:
-    """
-    Retourne les seuils réglementaires (%) selon la fiche et l'année de la date d'engagement.
-    Clés possibles : seuil_s_site, seuil_s_contact (absents si non applicable).
-    """
     has_site    = get_col_by_label(fiche, "Résultat du contrôle sur site")    is not None
     has_contact = get_col_by_label(fiche, "Résultat du contrôle par contact") is not None
 
-    # Cas spéciaux fiches EN-101 / EN-103 années 2019-2021 : site uniquement
     if fiche == "EN-101" and annee in (2019, 2020, 2021):
         return {"seuil_s_site": 10.0}
     if fiche == "EN-103" and annee in (2019, 2020, 2021):
         return {"seuil_s_site": 20.0}
-
-    # EN-102 2021 : site + contact
     if fiche == "EN-102" and annee == 2021:
         return {"seuil_s_site": 10.0, "seuil_s_contact": 20.0}
 
-    # Cas avec site ET contact
     if has_site and has_contact:
         table = {2022: (7.5, 15.0), 2023: (10.0, 20.0), 2024: (12.5, 25.0)}
-        s, c = table.get(annee, (15.0, 30.0))  # 2025+
+        s, c = table.get(annee, (15.0, 30.0))
         return {"seuil_s_site": s, "seuil_s_contact": c}
 
-    # Cas contact uniquement
     if has_contact and not has_site:
         table_c = {2022: 15.0, 2023: 20.0, 2024: 25.0}
-        c = table_c.get(annee, 30.0)  # 2025+
+        c = table_c.get(annee, 30.0)
         return {"seuil_s_contact": c}
 
-    # Site uniquement sans cas spécial
     if has_site and not has_contact:
         table_s = {2022: 7.5, 2023: 10.0, 2024: 12.5}
         s = table_s.get(annee, 15.0)
@@ -248,15 +247,10 @@ def get_seuils(fiche: str, annee: int) -> dict:
 
 
 def compute_taux(data: pd.DataFrame, fiche: str, total_ops: int) -> dict:
-    """
-    Calcule les taux réglementaires sur l'ensemble du lot.
-    Retourne un dict avec les taux disponibles selon la fiche.
-    """
     result = {}
     col_site    = get_col_by_label(fiche, "Résultat du contrôle sur site")
     col_contact = get_col_by_label(fiche, "Résultat du contrôle par contact")
 
-    # Année de la date d'engagement la plus récente (col Q)
     annee = None
     if "Q" in data.columns:
         dates_valides = data["Q"].dropna()
@@ -281,14 +275,11 @@ def compute_taux(data: pd.DataFrame, fiche: str, total_ops: int) -> dict:
     if col_contact and col_contact in data.columns:
         vals_contact = data[col_contact].astype(str).str.lower().str.strip()
         nb_s_contact = int((vals_contact == "satisfaisant").sum())
-
         result["taux_s_contact"] = nb_s_contact / total_ops * 100 if total_ops > 0 else 0
         result["nb_s_contact"]   = nb_s_contact
 
     return result
 
-
-# ─── Helpers ────────────────────────────────────────────────────────────────
 
 def col_letter_to_idx(letter: str) -> int:
     idx = 0
@@ -473,7 +464,11 @@ def detect_fiche(ref: str) -> str | None:
     return m2.group(0).upper() if m2 else None
 
 
-def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list, lot_destination: str = "", delais_courts: bool = False, tous_non_visites: bool = False) -> str:
+def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list,
+                  lot_destination: str = "", delais_courts: bool = False,
+                  tous_non_visites: bool = False,
+                  incomplet_choix: list = None) -> str:
+
     bloc_ns = ""
     if ns_adresses_causes:
         lignes = []
@@ -483,6 +478,15 @@ def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list, lot
                 if msg_complet.strip():
                     lignes.append(f"\t• {msg_complet.strip()}")
         bloc_ns = "\n\n" + "\n".join(lignes)
+
+    # Bloc dossier incomplet (avant "Vous trouverez ci-joint...")
+    bloc_incomplet = ""
+    if incomplet_choix:
+        if len(incomplet_choix) == 1:
+            bloc_incomplet = f"\n\n{MESSAGES_INCOMPLET[incomplet_choix[0]]}"
+        else:
+            lignes_inc = [f"• {MESSAGES_INCOMPLET[c]}" for c in incomplet_choix]
+            bloc_incomplet = "\n\n" + "\n".join(lignes_inc)
 
     bloc_destination = ""
     if lot_destination.strip():
@@ -500,7 +504,8 @@ def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list, lot
             f"Bonjour,\n\n\n"
             f"Pour votre information, nous avons reçu le retour du lot de contrôle {lot_label}.\n\n"
             f"Tous les taux réglementaires sont respectés. Toutes les opérations du lot relatif "
-            f"à la fiche travaux peuvent être finalisées.\n\n"
+            f"à la fiche travaux peuvent être finalisées."
+            f"{bloc_incomplet}\n\n"
             f"Vous trouverez ci-joint les résultats des contrôles pour vos opérations."
             f"{bloc_ns}{odicee}\n\n{fin}"
         ),
@@ -509,7 +514,8 @@ def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list, lot
             f"Pour votre information, nous avons reçu le retour du lot de contrôle {lot_label}.\n\n"
             f"Le taux d'opérations contrôlées non satisfaisantes dépasse les 10 %. "
             f"Nous ne pouvons finaliser que les opérations qui ont été contrôlées. "
-            f"Les opérations non visitées doivent être représentées dans un nouveau lot.\n\n"
+            f"Les opérations non visitées doivent être représentées dans un nouveau lot."
+            f"{bloc_incomplet}\n\n"
             f"Vous trouverez ci-joint les résultats des contrôles pour vos opérations."
             f"{bloc_ns}{odicee}\n\n{fin}"
         ),
@@ -517,7 +523,8 @@ def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list, lot
             f"Bonjour,\n\n\n"
             f"Pour votre information, nous avons reçu le retour du lot de contrôle {lot_label}.\n\n"
             f"Les taux réglementaires ne sont pas atteints. Nous ne pouvons finaliser aucune opération "
-            f"dans ce lot. Les opérations doivent être représentées dans un nouveau lot.\n\n"
+            f"dans ce lot. Les opérations doivent être représentées dans un nouveau lot."
+            f"{bloc_incomplet}\n\n"
             f"Vous trouverez ci-joint les résultats des contrôles pour vos opérations."
             f"{bloc_ns}{odicee}\n\n{fin}"
         ),
@@ -526,17 +533,9 @@ def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list, lot
 
 
 def copy_and_download_button(text: str, xlsx_bytes: bytes, filename: str, client_name: str, key: str):
-    """
-    Deux éléments côte à côte :
-    - Un bouton JS qui copie le message dans le presse-papiers
-    - Un st.download_button natif Streamlit pour le téléchargement Excel
-    Les deux sont présentés comme une unité visuelle.
-    """
-    import base64
     escaped = text.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
     label   = f"📋 Copier le message — {client_name}"
 
-    # Bouton JS pour la copie (dans iframe Streamlit)
     st.components.v1.html(
         f"""
         <button onclick="
@@ -559,7 +558,6 @@ def copy_and_download_button(text: str, xlsx_bytes: bytes, filename: str, client
         height=55,
     )
 
-    # Bouton natif Streamlit pour le téléchargement
     st.download_button(
         label=f"⬇️ Télécharger les résultats Excel — {client_name}",
         data=xlsx_bytes,
@@ -571,7 +569,6 @@ def copy_and_download_button(text: str, xlsx_bytes: bytes, filename: str, client
 
 
 def afficher_taux(taux: dict, fiche: str):
-    """Affiche les indicateurs de taux dans la section informations du lot."""
     has_site    = "taux_s_site"    in taux
     has_contact = "taux_s_contact" in taux
     seuils      = taux.get("seuils", {})
@@ -583,14 +580,13 @@ def afficher_taux(taux: dict, fiche: str):
                    + ("  |  " if 'seuil_s_site' in seuils and 'seuil_s_contact' in seuils else "")
                    + (f"S contact ≥ {seuils.get('seuil_s_contact', '—')} %" if 'seuil_s_contact' in seuils else ""))
 
-    nb_cartes = sum([has_site * 2, has_contact])  # site → 2 cartes (S + NS), contact → 1
+    nb_cartes = sum([has_site * 2, has_contact])
     cols = st.columns(nb_cartes if nb_cartes > 0 else 1)
     col_idx = 0
 
     if has_site:
-        seuil_s  = seuils.get("seuil_s_site",  0)
-        seuil_ns = 10.0  # Toujours 10 % pour NS
-
+        seuil_s  = seuils.get("seuil_s_site", 0)
+        seuil_ns = 10.0
         ok_s  = taux["taux_s_site"]  >= seuil_s
         ok_ns = taux["taux_ns_site"] <= seuil_ns
         total = taux.get("total_ops", taux["nb_s_site"] + taux["nb_ns_site"])
@@ -677,7 +673,6 @@ if uploaded:
 
     st.success(f"✅ Fichier chargé — **{len(data)}** ligne(s) · **{len(clients)}** client(s) détecté(s)")
 
-    # ── Indicateurs de taux du lot ───────────────────────────────────────────
     total_ops = int(data["D"].notna().sum() - (data["D"].astype(str).str.strip() == "").sum())
     taux_lot = compute_taux(data, fiche_globale, total_ops)
     if taux_lot:
@@ -694,7 +689,6 @@ if uploaded:
         "Tous taux KO": "#ffebee",
     }[taux_choix]
 
-    # ── Sidebar ──────────────────────────────────────────────────────────────
     st.sidebar.header("Filtres & Export")
     selected = st.sidebar.multiselect("Clients à afficher", options=clients, default=clients)
 
@@ -722,7 +716,6 @@ if uploaded:
             mime="application/zip",
         )
 
-    # ── Section par client ───────────────────────────────────────────────────
     if not selected:
         st.info("Aucun client sélectionné dans le panneau de gauche.")
     else:
@@ -745,10 +738,21 @@ if uploaded:
                 num_dossier = " / ".join(prefixes) if prefixes else ""
                 st.info(f"📁 Numéro(s) de dossier : **{num_dossier}**" if num_dossier else "📁 Aucun numéro de dossier détecté")
 
+                # ── Options par client ───────────────────────────────────────
                 dest_active_key = f"dest_active_{client}"
-                dest_key = f"lot_dest_{client}"
+                dest_key        = f"lot_dest_{client}"
+                delais_key      = f"delais_{client}"
+                incomplet_key   = f"incomplet_{client}"
+                incomplet_choix_key = f"incomplet_choix_{client}"
 
-                activer_destination = st.checkbox("Spécifier un lot de destination", key=dest_active_key)
+                col_opt1, col_opt2, col_opt3 = st.columns(3)
+                with col_opt1:
+                    activer_destination = st.checkbox("Spécifier un lot de destination", key=dest_active_key)
+                with col_opt2:
+                    delais_courts = st.checkbox("⏳ Délai restant pour contrôle < 3 mois", key=delais_key)
+                with col_opt3:
+                    dossier_incomplet = st.checkbox("📂 Dossier incomplet", key=incomplet_key)
+
                 lot_destination = ""
                 if activer_destination:
                     lot_destination = st.text_input(
@@ -757,8 +761,16 @@ if uploaded:
                         key=dest_key,
                     )
 
-                delais_key = f"delais_{client}"
-                delais_courts = st.checkbox("⏳ Délai restant pour contrôle < 3 mois", key=delais_key)
+                # Menu déroulant dossier incomplet (sur la même ligne que la coche)
+                incomplet_choix = []
+                if dossier_incomplet:
+                    incomplet_choix = st.multiselect(
+                        "Type d'incomplet",
+                        options=list(MESSAGES_INCOMPLET.keys()),
+                        default=[],
+                        key=incomplet_choix_key,
+                        label_visibility="collapsed",
+                    )
 
                 filename = build_filename(client, num_dossier, num_lot)
 
@@ -810,7 +822,11 @@ if uploaded:
 
                     st.markdown("---")
 
-                message = build_message(taux_choix, lot_label, ns_adresses_causes, lot_destination, delais_courts, tous_non_visites)
+                message = build_message(
+                    taux_choix, lot_label, ns_adresses_causes,
+                    lot_destination, delais_courts, tous_non_visites,
+                    incomplet_choix if dossier_incomplet else [],
+                )
 
                 st.markdown("**✉️ Message à envoyer au client :**")
                 st.markdown(
