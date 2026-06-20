@@ -540,7 +540,13 @@ if uploaded:
                 dossier_key = f"dossier_{client}"
                 dest_active_key = f"dest_active_{client}"
                 dest_key = f"lot_dest_{client}"
-                num_dossier_c = st.session_state.get(dossier_key, "")
+                # Recalculer les préfixes depuis col D
+                prefixes_c = []
+                for val in df_c["D"].dropna():
+                    digits_c = re.sub(r'\D', '', str(val))[:6]
+                    if digits_c and digits_c not in prefixes_c:
+                        prefixes_c.append(digits_c)
+                num_dossier_c = " / ".join(prefixes_c) if prefixes_c else ""
                 lot_dest_c = st.session_state.get(dest_key, "") if st.session_state.get(dest_active_key, False) else ""
                 xlsx_bytes = build_client_excel(df_c, client, lot_dest_c, fiche_globale)
                 fname = build_filename(client, num_dossier_c, num_lot)
@@ -568,13 +574,14 @@ if uploaded:
 
             with st.expander(f"🏢 {client}  ({len(df_client)} opération(s)) — {label_volume}", expanded=True):
 
-                # ── Numéro de dossier par client ─────────────────────────────
-                dossier_key = f"dossier_{client}"
-                num_dossier = st.text_input(
-                    "Numéro de dossier(s)",
-                    placeholder="ex : DOS-001",
-                    key=dossier_key,
-                )
+                # ── Numéro de dossier par client (auto depuis col D) ─────────
+                prefixes = []
+                for val in df_client["D"].dropna():
+                    digits = re.sub(r'\D', '', str(val))[:6]
+                    if digits and digits not in prefixes:
+                        prefixes.append(digits)
+                num_dossier = " / ".join(prefixes) if prefixes else ""
+                st.info(f"📁 Numéro(s) de dossier : **{num_dossier}**" if num_dossier else "📁 Aucun numéro de dossier détecté")
 
                 # ── Lot de destination ───────────────────────────────────────
                 dest_active_key = f"dest_active_{client}"
