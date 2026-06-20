@@ -82,12 +82,12 @@ def extract_tables(df: pd.DataFrame):
     if header_idx is None:
         raise ValueError("Impossible de trouver la ligne d'en-tête (cherche 'REFERENCE EMMY').")
 
-    needed_cols = [col_letter_to_idx(l) for l in ["D", "E", "F", "G", "H", "I", "BS", "BY"]]
+    needed_cols = [col_letter_to_idx(l) for l in ["D", "E", "F", "G", "H", "I", "BS", "BY", "N", "O"]]
     if max(needed_cols) >= df.shape[1]:
         raise ValueError(f"Le fichier n'a que {df.shape[1]} colonnes (colonne BY attendue).")
 
     data_raw = df.iloc[header_idx + 1:, needed_cols].copy()
-    data_raw.columns = ["D", "E", "F", "G", "H", "I", "BS", "BY"]
+    data_raw.columns = ["D", "E", "F", "G", "H", "I", "BS", "BY", "N", "O"]
     data_raw = data_raw.dropna(subset=["I"], how="all")
     data_raw = data_raw[data_raw["I"].astype(str).str.strip() != ""]
 
@@ -97,6 +97,9 @@ def extract_tables(df: pd.DataFrame):
     for col in ["BS", "BY"]:
         data_raw[col] = data_raw[col].fillna("non visité")
         data_raw[col] = data_raw[col].apply(lambda v: "non visité" if str(v).strip() == "" else v)
+
+    for col in ["N", "O"]:
+        data_raw[col] = pd.to_numeric(data_raw[col], errors="coerce").fillna(0)
 
     clients = sorted(data_raw["I"].dropna().unique().tolist())
     return data_raw.reset_index(drop=True), clients
@@ -214,7 +217,7 @@ def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list, lot
 
     bloc_delais = ""
     if delais_courts:
-        bloc_delais = "\n\nLa date de fin de travaux nous laisse moins de 3 mois pour un nouveau contrôle. Nous ne pouvons plus intégrer le dossier dans un nouveau lot pour validation. Merci de nous fournir un document du marché permettant de repousser cette date, ou de nous confirmer l'annulation du dossier."
+        bloc_delais = "\n\nLa date de fin de travaux est inférieure à 3 mois. Nous ne pouvons plus intégrer le dossier dans un nouveau lot de contrôle pour validation. Merci de nous fournir un document du marché permettant de repousser cette date, ou de nous confirmer l'annulation du dossier."
 
     fin = f"{bloc_destination}{bloc_delais}\n\nCordialement,"
 
@@ -351,7 +354,14 @@ if uploaded:
         for client in selected:
             df_client = data[data["I"] == client].copy().reset_index(drop=True)
 
-            with st.expander(f"🏢 {client}  ({len(df_client)} opération(s))", expanded=True):
+            # Calcul du volume total (colonnes N + O) * 0.001
+            volume = (pd.to_numeric(df_client["N"], errors="coerce").fillna(0) +
+                      pd.to_numeric(df_client["O"], errors="coerce").fillna(0)).sum() * 0.001
+            volume_str = f"{volume:,.3f} MWhc".replace(",", " ")
+            volume_bold = volume >= 2000
+            label_volume = f"**{volume_str}**" if volume_bold else volume_str
+
+            with st.expander(f"🏢 {client}  ({len(df_client)} opération(s)) — {label_volume}", expanded=True):
 
                 # ── Numéro de dossier par client ─────────────────────────────
                 dossier_key = f"dossier_{client}"
