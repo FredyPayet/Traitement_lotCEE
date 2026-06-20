@@ -168,7 +168,43 @@ NS_REF = {
             "Merci de faire reprendre la facture et de nous la transmettre."
         ),
     },
+    "EN-105": {
+        "Surface": ("", ""),
+        "Epaisseur": ("", ""),
+        "Homogénéité": ("", ""),
+        "Etanchéité": ("", ""),
+        "Ecart au feu": ("", ""),
+        "Non réalisés": ("", ""),
+        "Document": ("", ""),
+    },
 }
+
+# ─── Configuration colonnes par fiche ───────────────────────────────────────
+# Colonnes spécifiques (hors D-I fixes) et leur label pour chaque groupe de fiches
+FICHE_COLS = {
+    # D à I + BS + BY
+    "EN-101": {"extra": ["BS", "BY"], "labels": {"BS": "Conclusion de l'audit", "BY": "Conformité après correction"}},
+    "EN-102": {"extra": ["BS", "BY"], "labels": {"BS": "Conclusion de l'audit", "BY": "Conformité après correction"}},
+    "EN-103": {"extra": ["BS", "BY"], "labels": {"BS": "Conclusion de l'audit", "BY": "Conformité après correction"}},
+    # D à I + AI
+    "TH-106": {"extra": ["AI"], "labels": {"AI": "Conclusion de l'audit"}},
+    "TH-158": {"extra": ["AI"], "labels": {"AI": "Conclusion de l'audit"}},
+    # D à I + BH + BN
+    "TH-127": {"extra": ["BH", "BN"], "labels": {"BH": "Conclusion de l'audit", "BN": "Conformité après correction"}},
+    "EN-105": {"extra": ["BH", "BN"], "labels": {"BH": "Conclusion de l'audit", "BN": "Conformité après correction"}},
+    # D à I + AL
+    "TH-107": {"extra": ["AL"], "labels": {"AL": "Conclusion de l'audit"}},
+    "TH-107-SE": {"extra": ["AL"], "labels": {"AL": "Conclusion de l'audit"}},
+    "EN-104": {"extra": ["AL"], "labels": {"AL": "Conclusion de l'audit"}},
+    # D à I + AK
+    "TH-112": {"extra": ["AK"], "labels": {"AK": "Conclusion de l'audit"}},
+}
+
+def get_fiche_extra_cols(fiche: str) -> tuple[list, dict]:
+    """Retourne (liste colonnes extra, dict labels) pour la fiche donnée."""
+    cfg = FICHE_COLS.get(fiche, {"extra": ["BS", "BY"], "labels": {"BS": "Conclusion de l'audit", "BY": "Conformité après correction"}})
+    return cfg["extra"], cfg["labels"]
+
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -205,7 +241,7 @@ def load_dataframe(file_bytes: bytes, filename: str) -> pd.DataFrame:
         os.unlink(tmp_path)
 
 
-def extract_tables(df: pd.DataFrame):
+def extract_tables(df: pd.DataFrame, fiche: str = "EN-101"):
     header_idx = None
     for i, row in df.iterrows():
         for val in row:
@@ -217,19 +253,24 @@ def extract_tables(df: pd.DataFrame):
     if header_idx is None:
         raise ValueError("Impossible de trouver la ligne d'en-tête (cherche 'REFERENCE EMMY').")
 
-    needed_cols = [col_letter_to_idx(l) for l in ["D", "E", "F", "G", "H", "I", "BS", "BY", "N", "O"]]
+    extra_cols, _ = get_fiche_extra_cols(fiche)
+    base_cols = ["D", "E", "F", "G", "H", "I"]
+    all_col_letters = base_cols + extra_cols + ["N", "O"]
+    needed_cols = [col_letter_to_idx(l) for l in all_col_letters]
+
     if max(needed_cols) >= df.shape[1]:
-        raise ValueError(f"Le fichier n'a que {df.shape[1]} colonnes (colonne BY attendue).")
+        raise ValueError(f"Le fichier n'a que {df.shape[1]} colonnes (colonne {all_col_letters[-1]} attendue).")
 
     data_raw = df.iloc[header_idx + 1:, needed_cols].copy()
-    data_raw.columns = ["D", "E", "F", "G", "H", "I", "BS", "BY", "N", "O"]
+    data_raw.columns = all_col_letters
     data_raw = data_raw.dropna(subset=["I"], how="all")
     data_raw = data_raw[data_raw["I"].astype(str).str.strip() != ""]
 
     if data_raw.empty:
         raise ValueError("Aucune ligne de données trouvée. Vérifiez que la colonne I est remplie.")
 
-    for col in ["BS", "BY"]:
+    # Remplir "non visité" pour les colonnes de conclusion/conformité
+    for col in extra_cols:
         data_raw[col] = data_raw[col].fillna("non visité")
         data_raw[col] = data_raw[col].apply(lambda v: "non visité" if str(v).strip() == "" else v)
 
@@ -257,13 +298,16 @@ def get_cell_color(value: str):
     return None
 
 
-def build_client_excel(df_client: pd.DataFrame, client_name: str, lot_destination: str = "") -> bytes:
+def build_client_excel(df_client: pd.DataFrame, client_name: str, lot_destination: str = "", fiche: str = "EN-101") -> bytes:
     wb = Workbook()
     ws = wb.active
     ws.title = client_name[:31]
 
-    col_keys = ["D", "E", "F", "G", "H", "I", "BS", "BY"]
-    headers = [COL_LABELS[k] for k in col_keys]
+    extra_cols, extra_labels = get_fiche_extra_cols(fiche)
+    base_keys = ["D", "E", "F", "G", "H", "I"]
+    col_keys = base_keys + extra_cols
+    all_labels = {**COL_LABELS, **extra_labels}
+    headers = [all_labels.get(k, k) for k in col_keys]
 
     # Ajout colonne "Nouveau lot de contrôle" si lot_destination renseigné
     if lot_destination:
@@ -273,8 +317,8 @@ def build_client_excel(df_client: pd.DataFrame, client_name: str, lot_destinatio
         col_keys_ext = col_keys
         headers_ext = headers
 
-    bs_col_idx = col_keys_ext.index("BS") + 1
-    by_col_idx = col_keys_ext.index("BY") + 1
+    # Colonnes à colorier = colonnes extra (conclusion/conformité)
+    colored_col_indices = [col_keys_ext.index(c) + 1 for c in extra_cols if c in col_keys_ext]
 
     thin = Side(style="thin", color="000000")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
@@ -299,12 +343,14 @@ def build_client_excel(df_client: pd.DataFrame, client_name: str, lot_destinatio
             cell.alignment = cell_align
             cell.border = border
             cell.font = Font(name="Arial", size=10)
-            if col_num in (bs_col_idx, by_col_idx):
+            if col_num in colored_col_indices:
                 color = get_cell_color(str(val))
                 if color:
                     cell.fill = PatternFill("solid", fgColor=color)
 
-    col_widths = [20, 30, 35, 12, 20, 35, 30, 25] + ([25] if lot_destination else [])
+    base_widths = [20, 30, 35, 12, 20, 35]
+    extra_widths = [30] * len(extra_cols)
+    col_widths = base_widths + extra_widths + ([25] if lot_destination else [])
     for i, width in enumerate(col_widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = width
 
@@ -320,9 +366,11 @@ def build_filename(client_name: str, num_dossier: str, num_lot: str) -> str:
     return f"{name}_{dossier}_{lot}.xlsx"
 
 
-def get_ns_adresses(df_client: pd.DataFrame) -> list:
+def get_ns_adresses(df_client: pd.DataFrame, conclusion_col: str = "BS") -> list:
     """Retourne liste de dicts {adresse, fiche} pour les lignes non satisfaisantes."""
-    ns_rows = df_client[df_client["BS"].str.lower().str.contains("non satisfaisant", na=False)]
+    if conclusion_col not in df_client.columns:
+        conclusion_col = df_client.columns[6] if len(df_client.columns) > 6 else "BS"
+    ns_rows = df_client[df_client[conclusion_col].astype(str).str.lower().str.contains("non satisfaisant", na=False)]
     result = []
     for _, row in ns_rows.iterrows():
         adresse = " ".join(filter(None, [
@@ -429,6 +477,27 @@ def copy_button(text: str, key: str):
 
 # ─── UI ─────────────────────────────────────────────────────────────────────
 
+# ── Informations lot (avant import) ─────────────────────────────────────────
+st.subheader("📋 Informations du lot")
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    num_lot = st.text_input("Numéro de lot", placeholder="ex : LOT-2024-001")
+with col2:
+    taux_choix = st.selectbox(
+        "Résultat du lot",
+        options=["Taux OK", "Taux NS KO", "Tous taux KO"],
+    )
+with col3:
+    fiches_dispo = sorted(FICHE_COLS.keys())
+    fiche_globale = st.selectbox(
+        "Fiche CEE du lot",
+        options=fiches_dispo,
+        key="fiche_globale",
+    )
+
+st.markdown("---")
+
 uploaded = st.file_uploader(
     "Choisir un fichier Excel (.xls / .xlsx)",
     type=["xls", "xlsx", "xlsm"],
@@ -439,33 +508,12 @@ if uploaded:
         try:
             file_bytes = uploaded.read()
             df_raw = load_dataframe(file_bytes, uploaded.name)
-            data, clients = extract_tables(df_raw)
+            data, clients = extract_tables(df_raw, fiche_globale)
         except Exception as e:
             st.error(f"❌ Erreur lors de la lecture : {e}")
             st.stop()
 
     st.success(f"✅ Fichier chargé — **{len(data)}** ligne(s) · **{len(clients)}** client(s) détecté(s)")
-
-    # ── Informations lot ─────────────────────────────────────────────────────
-    st.markdown("---")
-    st.subheader("📋 Informations du lot")
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        num_lot = st.text_input("Numéro de lot", placeholder="ex : LOT-2024-001")
-    with col2:
-        taux_choix = st.selectbox(
-            "Résultat du lot",
-            options=["Taux OK", "Taux NS KO", "Tous taux KO"],
-        )
-    with col3:
-        fiches_dispo = sorted(NS_REF.keys())
-        fiche_globale = st.selectbox(
-            "Fiche CEE du lot",
-            options=fiches_dispo,
-            key="fiche_globale",
-        )
-
     st.markdown("---")
 
     lot_label = num_lot.strip() if num_lot.strip() else "[numéro de lot non renseigné]"
@@ -492,7 +540,7 @@ if uploaded:
                 dest_key = f"lot_dest_{client}"
                 num_dossier_c = st.session_state.get(dossier_key, "")
                 lot_dest_c = st.session_state.get(dest_key, "") if st.session_state.get(dest_active_key, False) else ""
-                xlsx_bytes = build_client_excel(df_c, client, lot_dest_c)
+                xlsx_bytes = build_client_excel(df_c, client, lot_dest_c, fiche_globale)
                 fname = build_filename(client, num_dossier_c, num_lot)
                 zf.writestr(fname, xlsx_bytes)
         st.sidebar.download_button(
@@ -553,7 +601,9 @@ if uploaded:
                 st.markdown("---")
 
                 # ── Saisie des non-conformités NS via référentiel ────────────
-                ns_adresses = get_ns_adresses(df_client)
+                extra_cols_fiche, _ = get_fiche_extra_cols(fiche_globale)
+                conclusion_col = extra_cols_fiche[0]
+                ns_adresses = get_ns_adresses(df_client, conclusion_col)
                 ns_adresses_causes = []
 
                 if ns_adresses:
@@ -615,7 +665,7 @@ if uploaded:
                 st.markdown("---")
 
                 # ── Export Excel ─────────────────────────────────────────────
-                xlsx_bytes = build_client_excel(df_client, client, lot_destination)
+                xlsx_bytes = build_client_excel(df_client, client, lot_destination, fiche_globale)
                 st.download_button(
                     label=f"⬇️ Télécharger Excel — {filename}",
                     data=xlsx_bytes,
