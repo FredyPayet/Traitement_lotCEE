@@ -198,11 +198,11 @@ def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list) -> 
     if ns_adresses_causes:
         lignes = []
         for adresse, causes in ns_adresses_causes:
-            lignes.append(f"• {adresse}")
+            lignes.append(f"• {adresse} :")
             for cause in causes:
                 c = cause.strip()
                 if c:
-                    lignes.append(f"    ◦ {c}")
+                    lignes.append(f"\t• {c}")
         bloc_ns = "\n\n" + "\n".join(lignes)
 
     corps = {
