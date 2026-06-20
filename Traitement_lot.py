@@ -167,10 +167,10 @@ def build_client_excel(df_client: pd.DataFrame, client_name: str) -> bytes:
     return buf.getvalue()
 
 
-def build_filename(client_name: str, num_dossier: str) -> str:
+def build_filename(client_name: str, num_lot: str) -> str:
     name = sanitize_filename(client_name)[:50]
-    dossier = sanitize_filename(num_dossier.strip()) if num_dossier.strip() else "sans_dossier"
-    return f"{name}_{dossier}.xlsx"
+    lot = sanitize_filename(num_lot.strip()) if num_lot.strip() else "lot_non_renseigné"
+    return f"{name}_Résultat du {lot}.xlsx"
 
 
 def get_ns_adresses(df_client: pd.DataFrame) -> list:
@@ -318,7 +318,7 @@ if uploaded:
             for client in clients:
                 df_c = data[data["I"] == client].copy()
                 xlsx_bytes = build_client_excel(df_c, client)
-                fname = build_filename(client, num_dossier)
+                fname = build_filename(client, num_lot)
                 zf.writestr(fname, xlsx_bytes)
         st.sidebar.download_button(
             label="📦 Télécharger le ZIP",
@@ -333,7 +333,7 @@ if uploaded:
     else:
         for client in selected:
             df_client = data[data["I"] == client].copy().reset_index(drop=True)
-            filename = build_filename(client, num_dossier)
+            filename = build_filename(client, num_lot)
 
             with st.expander(f"🏢 {client}  ({len(df_client)} opération(s))", expanded=True):
 
