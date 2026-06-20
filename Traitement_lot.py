@@ -10,9 +10,9 @@ from openpyxl import Workbook
 from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
-st.set_page_config(page_title="Tableaux par client", layout="wide")
+st.set_page_config(page_title="Traitement des lots CEEE contrôles réglementaires", layout="wide")
 
-st.title("📊 Tableaux par client — Contrôles CEE")
+st.title("📊 Traitement des lots CEEE contrôles réglementaires")
 st.markdown("Chargez votre fichier Excel (`.xls` ou `.xlsx`) pour générer automatiquement un fichier Excel par client.")
 
 # ─── Labels colonnes ────────────────────────────────────────────────────────
