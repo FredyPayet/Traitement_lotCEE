@@ -526,35 +526,29 @@ def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list, lot
 
 
 def copy_and_download_button(text: str, xlsx_bytes: bytes, filename: str, client_name: str, key: str):
-    """Bouton unique : copie le message ET déclenche le téléchargement du fichier Excel."""
+    """
+    Deux éléments côte à côte :
+    - Un bouton JS qui copie le message dans le presse-papiers
+    - Un st.download_button natif Streamlit pour le téléchargement Excel
+    Les deux sont présentés comme une unité visuelle.
+    """
     import base64
-    escaped   = text.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
-    b64_xlsx  = base64.b64encode(xlsx_bytes).decode("utf-8")
-    safe_name = filename.replace("'", "\'")
-    label     = f"📋 Copier le message et télécharger les résultats de {client_name}"
+    escaped = text.replace("\\", "\\\\").replace("`", "\\`").replace("$", "\\$")
+    label   = f"📋 Copier le message — {client_name}"
 
+    # Bouton JS pour la copie (dans iframe Streamlit)
     st.components.v1.html(
         f"""
-        <button id="btn_{key}" onclick="
-            // Copie du message
+        <button onclick="
             navigator.clipboard.writeText(`{escaped}`)
-            .catch(() => {{}});
-
-            // Téléchargement Excel
-            const bytes = atob('{b64_xlsx}');
-            const arr   = new Uint8Array(bytes.length);
-            for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
-            const blob  = new Blob([arr], {{type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}});
-            const url   = URL.createObjectURL(blob);
-            const a     = document.createElement('a');
-            a.href      = url;
-            a.download  = '{safe_name}';
-            a.click();
-            URL.revokeObjectURL(url);
-
-            // Feedback visuel
-            this.innerText = '✅ Copié et téléchargé !';
-            setTimeout(() => this.innerText = `{label}`, 3000);
+            .then(() => {{
+                this.innerText = '✅ Message copié !';
+                setTimeout(() => this.innerText = '{label}', 2500);
+            }})
+            .catch(() => {{
+                this.innerText = '⚠️ Utilisez Ctrl+C';
+                setTimeout(() => this.innerText = '{label}', 2500);
+            }});
         "
         style="
             background-color:#2F5496; color:white; border:none;
@@ -563,6 +557,16 @@ def copy_and_download_button(text: str, xlsx_bytes: bytes, filename: str, client
         ">{label}</button>
         """,
         height=55,
+    )
+
+    # Bouton natif Streamlit pour le téléchargement
+    st.download_button(
+        label=f"⬇️ Télécharger les résultats Excel — {client_name}",
+        data=xlsx_bytes,
+        file_name=filename,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key=f"dl_{key}",
+        use_container_width=True,
     )
 
 
@@ -815,5 +819,6 @@ if uploaded:
                     f"{message}</div>",
                     unsafe_allow_html=True,
                 )
+                st.markdown("---")
                 xlsx_bytes = build_client_excel(df_client, client, lot_destination, fiche_globale)
                 copy_and_download_button(message, xlsx_bytes, filename, client, key=f"copy_{client}")
