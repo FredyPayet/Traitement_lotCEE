@@ -2,17 +2,21 @@ import streamlit as st
 import pandas as pd
 import subprocess
 import os
+import re
 import tempfile
 import io
+import zipfile
+from openpyxl import Workbook
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 
 st.set_page_config(page_title="Tableaux par client", layout="wide")
 
 st.title("📊 Tableaux par client — Contrôles CEE")
-st.markdown("Chargez votre fichier Excel (`.xls` ou `.xlsx`) pour générer automatiquement les tableaux par client.")
+st.markdown("Chargez votre fichier Excel (`.xls` ou `.xlsx`) pour générer automatiquement un fichier Excel par client.")
 
-# ─── Labels courts pour les colonnes C–I et BS ──────────────────────────────
+# ─── Labels courts pour les colonnes D–I, BS, BY ────────────────────────────
 COL_LABELS = {
-    "C": "Réf. EMMY",
     "D": "Réf. interne",
     "E": "Nom du site",
     "F": "Adresse",
@@ -20,12 +24,28 @@ COL_LABELS = {
     "H": "Ville",
     "I": "Raison sociale bénéficiaire",
     "BS": "Conclusion de l'audit",
+    "BY": "Conformité après correction",
+}
+
+# ─── Couleurs mise en forme Excel ───────────────────────────────────────────
+COLORS = {
+    "satisfaisant":    "C6EFCE",  # vert clair
+    "non_satisfaisant":"FFCCCC",  # rouge clair
+    "inaccessible":    "FFE0B2",  # orange clair
+    "non_visite":      "E0E0E0",  # gris clair
+    "header":          "2F5496",  # bleu foncé header
 }
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
 
+def col_letter_to_idx(letter: str) -> int:
+    idx = 0
+    for ch in letter.upper().strip():
+        idx = idx * 26 + (ord(ch) - ord('A') + 1)
+    return idx - 1
+
+
 def convert_xls_to_xlsx(xls_path: str) -> str:
-    """Convert legacy .xls to .xlsx via LibreOffice; return new path."""
     out_dir = tempfile.mkdtemp()
     result = subprocess.run(
         ["libreoffice", "--headless", "--convert-to", "xlsx",
@@ -39,34 +59,22 @@ def convert_xls_to_xlsx(xls_path: str) -> str:
 
 
 def load_dataframe(file_bytes: bytes, filename: str) -> pd.DataFrame:
-    """Load the Excel file into a DataFrame, auto-converting .xls if needed."""
     ext = os.path.splitext(filename)[1].lower()
-
     if ext in (".xlsx", ".xlsm"):
-        df = pd.read_excel(io.BytesIO(file_bytes), header=None)
+        return pd.read_excel(io.BytesIO(file_bytes), header=None)
     else:
-        # Legacy .xls → convert first
         with tempfile.NamedTemporaryFile(suffix=".xls", delete=False) as tmp:
             tmp.write(file_bytes)
             tmp_path = tmp.name
         try:
             xlsx_path = convert_xls_to_xlsx(tmp_path)
-            df = pd.read_excel(xlsx_path, header=None)
+            return pd.read_excel(xlsx_path, header=None)
         finally:
             os.unlink(tmp_path)
 
-    return df
-
 
 def extract_tables(df: pd.DataFrame):
-    """
-    Returns:
-      header_row  – index of the header row (row containing 'C', 'REFERENCE EMMY…')
-      col_map     – dict mapping letter → column integer index (0-based)
-      clients     – sorted list of unique client names
-      data        – DataFrame with named columns (C-I + BS), client column = 'I'
-    """
-    # Find the header row: the row whose column B contains 'SIREN' (case-insensitive)
+    # Trouver la ligne d'en-tête
     header_idx = None
     for i, row in df.iterrows():
         for val in row:
@@ -77,59 +85,130 @@ def extract_tables(df: pd.DataFrame):
             break
 
     if header_idx is None:
-        raise ValueError(
-            "Impossible de trouver la ligne d'en-tête (cherche 'REFERENCE EMMY')."
-        )
+        raise ValueError("Impossible de trouver la ligne d'en-tête (cherche 'REFERENCE EMMY').")
 
-    # Build column map by letter
-    # Column letters in Excel: A=0, B=1, … Z=25, AA=26 … BS = ?
-    def col_letter_to_idx(letter: str) -> int:
-        letter = letter.upper().strip()
-        idx = 0
-        for ch in letter:
-            idx = idx * 26 + (ord(ch) - ord('A') + 1)
-        return idx - 1  # 0-based
-
-    col_c  = col_letter_to_idx("C")
-    col_d  = col_letter_to_idx("D")
-    col_e  = col_letter_to_idx("E")
-    col_f  = col_letter_to_idx("F")
-    col_g  = col_letter_to_idx("G")
-    col_h  = col_letter_to_idx("H")
-    col_i  = col_letter_to_idx("I")
-    col_bs = col_letter_to_idx("BS")
-
-    needed_cols = [col_c, col_d, col_e, col_f, col_g, col_h, col_i, col_bs]
+    needed_cols = [col_letter_to_idx(l) for l in ["D", "E", "F", "G", "H", "I", "BS", "BY"]]
     max_col = max(needed_cols)
 
     if max_col >= df.shape[1]:
-        raise ValueError(
-            f"Le fichier n'a que {df.shape[1]} colonnes "
-            f"(colonne BS = index {col_bs} attendue)."
-        )
+        raise ValueError(f"Le fichier n'a que {df.shape[1]} colonnes (colonne BY = index {col_letter_to_idx('BY')} attendue).")
 
-    # Data rows start after header
-    data_raw = df.iloc[header_idx + 1 :, needed_cols].copy()
-    data_raw.columns = ["C", "D", "E", "F", "G", "H", "I", "BS"]
+    data_raw = df.iloc[header_idx + 1:, needed_cols].copy()
+    data_raw.columns = ["D", "E", "F", "G", "H", "I", "BS", "BY"]
 
-    # Drop rows that are entirely empty
+    # Supprimer lignes sans client
     data_raw = data_raw.dropna(subset=["I"], how="all")
     data_raw = data_raw[data_raw["I"].astype(str).str.strip() != ""]
 
     if data_raw.empty:
-        raise ValueError(
-            "Aucune ligne de données trouvée après l'en-tête. "
-            "Vérifiez que le fichier contient bien des données (colonne I remplie)."
-        )
+        raise ValueError("Aucune ligne de données trouvée. Vérifiez que la colonne I est remplie.")
 
-    # Fill empty BS cells
-    data_raw["BS"] = data_raw["BS"].fillna("non visité")
-    data_raw["BS"] = data_raw["BS"].apply(
-        lambda v: "non visité" if str(v).strip() == "" else v
-    )
+    # Remplir cellules vides BS et BY
+    for col in ["BS", "BY"]:
+        data_raw[col] = data_raw[col].fillna("non visité")
+        data_raw[col] = data_raw[col].apply(lambda v: "non visité" if str(v).strip() == "" else v)
 
     clients = sorted(data_raw["I"].dropna().unique().tolist())
     return data_raw.reset_index(drop=True), clients
+
+
+def sanitize_filename(name: str) -> str:
+    """Supprime les caractères interdits dans les noms de fichiers Windows."""
+    return re.sub(r'[\\/*?:"<>|]', "", name).strip()
+
+
+def get_conclusion_summary(df_client: pd.DataFrame) -> str:
+    """Résumé des conclusions pour le nom de fichier."""
+    bs_vals = df_client["BS"].astype(str).str.lower()
+    if bs_vals.str.contains("non satisfaisant").any():
+        return "non_satisfaisant"
+    elif bs_vals.str.contains("inaccessible|non vérifiable").any():
+        return "inaccessible"
+    elif bs_vals.str.contains("satisfaisant").any():
+        return "satisfaisant"
+    return "non_visite"
+
+
+def get_ref_prefix(df_client: pd.DataFrame) -> str:
+    """6 premiers chiffres de la colonne D (première valeur non vide)."""
+    for val in df_client["D"].dropna():
+        digits = re.sub(r'\D', '', str(val))
+        if digits:
+            return digits[:6]
+    return "000000"
+
+
+def get_cell_color(value: str) -> str | None:
+    v = str(value).lower()
+    if "non satisfaisant" in v:
+        return COLORS["non_satisfaisant"]
+    elif "satisfaisant" in v:
+        return COLORS["satisfaisant"]
+    elif "inaccessible" in v or "non vérifiable" in v:
+        return COLORS["inaccessible"]
+    elif "non visité" in v:
+        return COLORS["non_visite"]
+    return None
+
+
+def build_client_excel(df_client: pd.DataFrame, client_name: str) -> bytes:
+    wb = Workbook()
+    ws = wb.active
+    ws.title = client_name[:31]
+
+    col_keys = ["D", "E", "F", "G", "H", "I", "BS", "BY"]
+    headers = [COL_LABELS[k] for k in col_keys]
+    bs_col_idx = col_keys.index("BS") + 1  # 1-based
+    by_col_idx = col_keys.index("BY") + 1
+
+    # Styles
+    thin = Side(style="thin", color="000000")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    header_font = Font(bold=True, color="FFFFFF", name="Arial", size=10)
+    header_fill = PatternFill("solid", fgColor=COLORS["header"])
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    cell_align = Alignment(vertical="center", wrap_text=True)
+
+    # En-tête
+    ws.row_dimensions[1].height = 40
+    for col_num, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col_num, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_align
+        cell.border = border
+
+    # Données
+    for row_num, (_, row) in enumerate(df_client.iterrows(), 2):
+        ws.row_dimensions[row_num].height = 20
+        for col_num, key in enumerate(col_keys, 1):
+            val = row[key]
+            cell = ws.cell(row=row_num, column=col_num, value=val)
+            cell.alignment = cell_align
+            cell.border = border
+            cell.font = Font(name="Arial", size=10)
+
+            # Colorier BS et BY
+            if col_num in (bs_col_idx, by_col_idx):
+                color = get_cell_color(str(val))
+                if color:
+                    cell.fill = PatternFill("solid", fgColor=color)
+
+    # Largeurs de colonnes
+    col_widths = [20, 30, 35, 12, 20, 35, 30, 25]
+    for i, width in enumerate(col_widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = width
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def build_filename(client_name: str, df_client: pd.DataFrame) -> str:
+    conclusion = get_conclusion_summary(df_client)
+    ref = get_ref_prefix(df_client)
+    name = sanitize_filename(client_name)[:50]
+    return f"{name}_{conclusion}_{ref}.xlsx"
 
 
 # ─── UI ─────────────────────────────────────────────────────────────────────
@@ -151,83 +230,69 @@ if uploaded:
 
     st.success(f"✅ Fichier chargé — **{len(data)}** ligne(s) · **{len(clients)}** client(s) détecté(s)")
 
-    # Rename columns for display
-    display_cols = {
-        "C": COL_LABELS["C"],
-        "D": COL_LABELS["D"],
-        "E": COL_LABELS["E"],
-        "F": COL_LABELS["F"],
-        "G": COL_LABELS["G"],
-        "H": COL_LABELS["H"],
-        "I": COL_LABELS["I"],
-        "BS": COL_LABELS["BS"],
-    }
+    # ── Sidebar ─────────────────────────────────────────────────────────────
+    st.sidebar.header("Filtres & Export")
+    selected = st.sidebar.multiselect("Clients à afficher", options=clients, default=clients)
 
-    # ── Sidebar: client filter ──────────────────────────────────────────────
-    st.sidebar.header("Filtres")
-    selected = st.sidebar.multiselect(
-        "Clients à afficher",
-        options=clients,
-        default=clients,
-    )
-
-    # ── Export all clients to Excel ─────────────────────────────────────────
-    def build_excel(df_in: pd.DataFrame, clients_list: list) -> bytes:
-        buf = io.BytesIO()
-        with pd.ExcelWriter(buf, engine="openpyxl") as writer:
-            for client in clients_list:
-                df_client = df_in[df_in["I"] == client].copy()
-                df_client = df_client.rename(columns=display_cols)
-                # Sheet name max 31 chars, no special chars
-                sheet = str(client)[:31].replace("/", "-").replace("\\", "-").replace("*", "").replace("?", "").replace("[", "").replace("]", "").replace(":", "")
-                df_client.to_excel(writer, sheet_name=sheet, index=False)
-        return buf.getvalue()
-
-    if st.sidebar.button("⬇️ Exporter tous les clients (Excel)"):
-        xlsx_bytes = build_excel(data, clients)
+    # Bouton ZIP — tous les clients
+    if st.sidebar.button("⬇️ Télécharger tous les fichiers (ZIP)"):
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for client in clients:
+                df_c = data[data["I"] == client].copy()
+                xlsx_bytes = build_client_excel(df_c, client)
+                filename = build_filename(client, df_c)
+                zf.writestr(filename, xlsx_bytes)
         st.sidebar.download_button(
-            label="Télécharger le fichier Excel",
-            data=xlsx_bytes,
-            file_name="tableaux_par_client.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            label="📦 Télécharger le ZIP",
+            data=zip_buf.getvalue(),
+            file_name="tableaux_clients.zip",
+            mime="application/zip",
         )
 
-    # ── Display per-client tables ───────────────────────────────────────────
+    # ── Tableaux par client ──────────────────────────────────────────────────
     if not selected:
         st.info("Aucun client sélectionné dans le panneau de gauche.")
     else:
         for client in selected:
-            df_client = data[data["I"] == client].copy()
-            df_client = df_client.rename(columns=display_cols)
-            df_client = df_client.reset_index(drop=True)
-            df_client.index += 1  # start at 1
+            df_client = data[data["I"] == client].copy().reset_index(drop=True)
+            df_client.index += 1
+
+            filename = build_filename(client, df_client)
 
             with st.expander(f"🏢 {client}  ({len(df_client)} opération(s))", expanded=True):
-                # Color-code the audit conclusion column
-                def color_conclusion(val):
-                    v = str(val).lower()
-                    if "non satisfaisant" in v:
-                        return "background-color: #ffd6d6; color: #8b0000;"
-                    elif "satisfaisant" in v:
-                        return "background-color: #d6f5d6; color: #145214;"
-                    elif "non visité" in v:
-                        return "background-color: #fff3cd; color: #7d5a00;"
-                    elif "inaccessible" in v or "non vérifiable" in v:
-                        return "background-color: #e0e0e0; color: #444;"
-                    return ""
 
-                styled = df_client.style.map(
-                    color_conclusion, subset=[COL_LABELS["BS"]]
-                )
+                # Aperçu coloré dans Streamlit
+                df_display = df_client.rename(columns=COL_LABELS)
 
+                def color_row(row):
+                    styles = [""] * len(row)
+                    for col_name in [COL_LABELS["BS"], COL_LABELS["BY"]]:
+                        if col_name in row.index:
+                            v = str(row[col_name]).lower()
+                            if "non satisfaisant" in v:
+                                bg = "#FFCCCC"
+                            elif "satisfaisant" in v:
+                                bg = "#C6EFCE"
+                            elif "inaccessible" in v or "non vérifiable" in v:
+                                bg = "#FFE0B2"
+                            elif "non visité" in v:
+                                bg = "#E0E0E0"
+                            else:
+                                bg = ""
+                            idx = list(row.index).index(col_name)
+                            styles[idx] = f"background-color: {bg};"
+                    return styles
+
+                styled = df_display.style.apply(color_row, axis=1)
                 st.dataframe(styled, use_container_width=True, height=min(400, 55 + 35 * len(df_client)))
 
-                # Per-client download button
-                csv = df_client.to_csv(index=False).encode("utf-8-sig")
+                # Bouton téléchargement Excel individuel
+                xlsx_bytes = build_client_excel(df_client, client)
                 st.download_button(
-                    label=f"⬇️ Télécharger CSV — {client}",
-                    data=csv,
-                    file_name=f"{client[:40]}.csv",
-                    mime="text/csv",
+                    label=f"⬇️ Télécharger Excel — {filename}",
+                    data=xlsx_bytes,
+                    file_name=filename,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key=f"dl_{client}",
                 )
