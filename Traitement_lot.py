@@ -180,30 +180,70 @@ NS_REF = {
 }
 
 # ─── Configuration colonnes par fiche ───────────────────────────────────────
-# Colonnes spécifiques (hors D-I fixes) et leur label pour chaque groupe de fiches
 FICHE_COLS = {
-    # D à I + BS + BY
-    "EN-101": {"extra": ["BS", "BY"], "labels": {"BS": "Conclusion de l'audit", "BY": "Conformité après correction"}},
-    "EN-102": {"extra": ["BS", "BY"], "labels": {"BS": "Conclusion de l'audit", "BY": "Conformité après correction"}},
-    "EN-103": {"extra": ["BS", "BY"], "labels": {"BS": "Conclusion de l'audit", "BY": "Conformité après correction"}},
-    # D à I + AI
-    "TH-106": {"extra": ["AI"], "labels": {"AI": "Conclusion de l'audit"}},
-    "TH-158": {"extra": ["AI"], "labels": {"AI": "Conclusion de l'audit"}},
-    # D à I + BH + BN
-    "TH-127": {"extra": ["BH", "BN"], "labels": {"BH": "Conclusion de l'audit", "BN": "Conformité après correction"}},
-    "EN-105": {"extra": ["BH", "BN"], "labels": {"BH": "Conclusion de l'audit", "BN": "Conformité après correction"}},
-    # D à I + AL
-    "TH-107": {"extra": ["AL"], "labels": {"AL": "Conclusion de l'audit"}},
-    "TH-107-SE": {"extra": ["AL"], "labels": {"AL": "Conclusion de l'audit"}},
-    "EN-104": {"extra": ["AL"], "labels": {"AL": "Conclusion de l'audit"}},
-    # D à I + AK
-    "TH-112": {"extra": ["AK"], "labels": {"AK": "Conclusion de l'audit"}},
+    "EN-101": {"extra": ["BS", "BY"], "labels": {"BS": "Résultat du contrôle sur site", "BY": "Résultat du contrôle par contact"}},
+    "EN-102": {"extra": ["BS", "BY"], "labels": {"BS": "Résultat du contrôle sur site", "BY": "Résultat du contrôle par contact"}},
+    "EN-103": {"extra": ["BS", "BY"], "labels": {"BS": "Résultat du contrôle sur site", "BY": "Résultat du contrôle par contact"}},
+    "TH-106": {"extra": ["AI"], "labels": {"AI": "Résultat du contrôle par contact"}},
+    "TH-158": {"extra": ["AI"], "labels": {"AI": "Résultat du contrôle par contact"}},
+    "TH-127": {"extra": ["BH", "BN"], "labels": {"BH": "Résultat du contrôle sur site", "BN": "Résultat du contrôle par contact"}},
+    "EN-105": {"extra": ["BH", "BN"], "labels": {"BH": "Résultat du contrôle sur site", "BN": "Résultat du contrôle par contact"}},
+    "TH-107": {"extra": ["AL"], "labels": {"AL": "Résultat du contrôle par contact"}},
+    "TH-107-SE": {"extra": ["AL"], "labels": {"AL": "Résultat du contrôle par contact"}},
+    "EN-104": {"extra": ["AL"], "labels": {"AL": "Résultat du contrôle par contact"}},
+    "TH-112": {"extra": ["AK"], "labels": {"AK": "Résultat du contrôle par contact"}},
 }
 
 def get_fiche_extra_cols(fiche: str) -> tuple[list, dict]:
-    """Retourne (liste colonnes extra, dict labels) pour la fiche donnée."""
-    cfg = FICHE_COLS.get(fiche, {"extra": ["BS", "BY"], "labels": {"BS": "Conclusion de l'audit", "BY": "Conformité après correction"}})
+    cfg = FICHE_COLS.get(fiche, {"extra": ["BS", "BY"], "labels": {"BS": "Résultat du contrôle sur site", "BY": "Résultat du contrôle par contact"}})
     return cfg["extra"], cfg["labels"]
+
+
+def get_col_by_label(fiche: str, label: str) -> str | None:
+    """Retourne le nom de colonne correspondant à un label pour une fiche donnée."""
+    extra_cols, extra_labels = get_fiche_extra_cols(fiche)
+    for col, lbl in extra_labels.items():
+        if lbl == label:
+            return col
+    return None
+
+
+def compute_taux(data: pd.DataFrame, fiche: str, total_ops: int) -> dict:
+    """
+    Calcule les taux réglementaires sur l'ensemble du lot.
+    Retourne un dict avec les taux disponibles selon la fiche.
+    """
+    result = {}
+    extra_cols, extra_labels = get_fiche_extra_cols(fiche)
+
+    col_site    = get_col_by_label(fiche, "Résultat du contrôle sur site")
+    col_contact = get_col_by_label(fiche, "Résultat du contrôle par contact")
+
+    if col_site and col_site in data.columns:
+        vals_site = data[col_site].astype(str).str.lower().str.strip()
+        nb_s_site  = (vals_site == "satisfaisant").sum()
+        nb_ns_site = (vals_site == "non satisfaisant").sum()
+        nb_controles_site = (vals_site != "non visité").sum()
+
+        taux_s_site  = nb_s_site  / total_ops * 100 if total_ops > 0 else 0
+        taux_ns_site = nb_ns_site / nb_controles_site * 100 if nb_controles_site > 0 else 0
+
+        result["taux_s_site"]       = taux_s_site
+        result["taux_ns_site"]      = taux_ns_site
+        result["nb_s_site"]         = int(nb_s_site)
+        result["nb_ns_site"]        = int(nb_ns_site)
+        result["nb_controles_site"] = int(nb_controles_site)
+
+    if col_contact and col_contact in data.columns:
+        vals_contact = data[col_contact].astype(str).str.lower().str.strip()
+        nb_s_contact = (vals_contact == "satisfaisant").sum()
+
+        taux_s_contact = nb_s_contact / total_ops * 100 if total_ops > 0 else 0
+
+        result["taux_s_contact"] = taux_s_contact
+        result["nb_s_contact"]   = int(nb_s_contact)
+
+    return result
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
@@ -269,7 +309,6 @@ def extract_tables(df: pd.DataFrame, fiche: str = "EN-101"):
     if data_raw.empty:
         raise ValueError("Aucune ligne de données trouvée. Vérifiez que la colonne I est remplie.")
 
-    # Remplir "non visité" pour les colonnes de conclusion/conformité
     for col in extra_cols:
         data_raw[col] = data_raw[col].fillna("non visité")
         data_raw[col] = data_raw[col].apply(lambda v: "non visité" if str(v).strip() == "" else v)
@@ -309,7 +348,6 @@ def build_client_excel(df_client: pd.DataFrame, client_name: str, lot_destinatio
     all_labels = {**COL_LABELS, **extra_labels}
     headers = [all_labels.get(k, k) for k in col_keys]
 
-    # Ajout colonne "Nouveau lot de contrôle" si lot_destination renseigné
     if lot_destination:
         col_keys_ext = col_keys + ["LOT_DEST"]
         headers_ext = headers + ["Nouveau lot de contrôle"]
@@ -317,7 +355,6 @@ def build_client_excel(df_client: pd.DataFrame, client_name: str, lot_destinatio
         col_keys_ext = col_keys
         headers_ext = headers
 
-    # Colonnes à colorier = colonnes extra (conclusion/conformité)
     colored_col_indices = [col_keys_ext.index(c) + 1 for c in extra_cols if c in col_keys_ext]
 
     thin = Side(style="thin", color="000000")
@@ -367,7 +404,6 @@ def build_filename(client_name: str, num_dossier: str, num_lot: str) -> str:
 
 
 def get_ns_adresses(df_client: pd.DataFrame, conclusion_col: str = "BS") -> list:
-    """Retourne liste de dicts {adresse, fiche} pour les lignes non satisfaisantes."""
     if conclusion_col not in df_client.columns:
         conclusion_col = df_client.columns[6] if len(df_client.columns) > 6 else "BS"
     ns_rows = df_client[df_client[conclusion_col].astype(str).str.lower().str.contains("non satisfaisant", na=False)]
@@ -378,7 +414,6 @@ def get_ns_adresses(df_client: pd.DataFrame, conclusion_col: str = "BS") -> list
             str(row["G"]).strip() if pd.notna(row["G"]) else "",
             str(row["H"]).strip() if pd.notna(row["H"]) else "",
         ]))
-        # Extraire la fiche CEE depuis la colonne D (ex: "BAR-EN-101-xxx" → "EN-101")
         ref_d = str(row["D"]).strip() if pd.notna(row["D"]) else ""
         fiche = detect_fiche(ref_d)
         if adresse.strip():
@@ -387,11 +422,9 @@ def get_ns_adresses(df_client: pd.DataFrame, conclusion_col: str = "BS") -> list
 
 
 def detect_fiche(ref: str) -> str | None:
-    """Détecte la fiche CEE dans une référence (ex: BAR-EN-101-xxx → EN-101)."""
     m = re.search(r"(EN|BAR|BAT|RES|IND|AGR|TRA)-?\d{3}", ref, re.IGNORECASE)
     if m:
         return m.group(0).upper()
-    # Cherche directement EN-101 style
     m2 = re.search(r"[A-Z]{2,3}-\d{3}", ref, re.IGNORECASE)
     return m2.group(0).upper() if m2 else None
 
@@ -416,7 +449,6 @@ def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list, lot
         bloc_delais = "\n\nLa date de fin de travaux est inférieure à 3 mois. Nous ne pouvons plus intégrer le dossier dans un nouveau lot de contrôle pour validation. Merci de nous fournir un document du marché permettant de repousser cette date, ou de nous confirmer l'annulation du dossier."
 
     fin = f"{bloc_destination}{bloc_delais}\n\nCordialement,"
-
     odicee = "" if tous_non_visites else "\n\nLes rapports de contrôle sont disponibles sur ODICEE, si vos opérations ont été contrôlées."
 
     corps = {
@@ -426,9 +458,7 @@ def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list, lot
             f"Tous les taux réglementaires sont respectés. Toutes les opérations du lot relatif "
             f"à la fiche travaux peuvent être finalisées.\n\n"
             f"Vous trouverez ci-joint les résultats des contrôles pour vos opérations."
-            f"{bloc_ns}"
-            f"{odicee}\n\n"
-            f"{fin}"
+            f"{bloc_ns}{odicee}\n\n{fin}"
         ),
         "Taux NS KO": (
             f"Bonjour,\n\n\n"
@@ -437,9 +467,7 @@ def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list, lot
             f"Nous ne pouvons finaliser que les opérations qui ont été contrôlées. "
             f"Les opérations non visitées doivent être représentées dans un nouveau lot.\n\n"
             f"Vous trouverez ci-joint les résultats des contrôles pour vos opérations."
-            f"{bloc_ns}"
-            f"{odicee}\n\n"
-            f"{fin}"
+            f"{bloc_ns}{odicee}\n\n{fin}"
         ),
         "Tous taux KO": (
             f"Bonjour,\n\n\n"
@@ -447,9 +475,7 @@ def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list, lot
             f"Les taux réglementaires ne sont pas atteints. Nous ne pouvons finaliser aucune opération "
             f"dans ce lot. Les opérations doivent être représentées dans un nouveau lot.\n\n"
             f"Vous trouverez ci-joint les résultats des contrôles pour vos opérations."
-            f"{bloc_ns}"
-            f"{odicee}\n\n"
-            f"{fin}"
+            f"{bloc_ns}{odicee}\n\n{fin}"
         ),
     }
     return corps[taux_choix]
@@ -477,9 +503,56 @@ def copy_button(text: str, key: str):
     )
 
 
+def afficher_taux(taux: dict, fiche: str):
+    """Affiche les indicateurs de taux dans la section informations du lot."""
+    extra_cols, extra_labels = get_fiche_extra_cols(fiche)
+    has_site    = "taux_s_site"    in taux
+    has_contact = "taux_s_contact" in taux
+
+    cols = st.columns(3 if (has_site and has_contact) else (2 if has_site or has_contact else 1))
+    col_idx = 0
+
+    if has_site:
+        color_s  = "#C6EFCE" if taux["taux_s_site"]  >= 90 else "#FFCCCC"
+        color_ns = "#C6EFCE" if taux["taux_ns_site"] <= 10 else "#FFCCCC"
+
+        with cols[col_idx]:
+            st.markdown(
+                f"<div style='background:{color_s};padding:12px;border-radius:8px;text-align:center'>"
+                f"<b>Taux S sur site</b><br>"
+                f"<span style='font-size:22px;font-weight:bold'>{taux['taux_s_site']:.1f} %</span><br>"
+                f"<small>{taux['nb_s_site']} S / {taux['nb_s_site'] + taux['nb_ns_site'] + (taux.get('nb_controles_site',0) - taux['nb_s_site'] - taux['nb_ns_site'])} opérations</small>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        col_idx += 1
+
+        with cols[col_idx]:
+            st.markdown(
+                f"<div style='background:{color_ns};padding:12px;border-radius:8px;text-align:center'>"
+                f"<b>Taux NS sur site</b><br>"
+                f"<span style='font-size:22px;font-weight:bold'>{taux['taux_ns_site']:.1f} %</span><br>"
+                f"<small>{taux['nb_ns_site']} NS / {taux['nb_controles_site']} contrôlées</small>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        col_idx += 1
+
+    if has_contact:
+        color_c = "#C6EFCE" if taux["taux_s_contact"] >= 90 else "#FFCCCC"
+        with cols[col_idx]:
+            st.markdown(
+                f"<div style='background:{color_c};padding:12px;border-radius:8px;text-align:center'>"
+                f"<b>Taux S par contact</b><br>"
+                f"<span style='font-size:22px;font-weight:bold'>{taux['taux_s_contact']:.1f} %</span><br>"
+                f"<small>{taux['nb_s_contact']} S / {len(extra_cols)} col. contact</small>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+
 # ─── UI ─────────────────────────────────────────────────────────────────────
 
-# ── Informations lot (avant import) ─────────────────────────────────────────
 st.subheader("📋 Informations du lot")
 
 col1, col2, col3 = st.columns(3)
@@ -516,6 +589,14 @@ if uploaded:
             st.stop()
 
     st.success(f"✅ Fichier chargé — **{len(data)}** ligne(s) · **{len(clients)}** client(s) détecté(s)")
+
+    # ── Indicateurs de taux du lot ───────────────────────────────────────────
+    total_ops = len(data)
+    taux_lot = compute_taux(data, fiche_globale, total_ops)
+    if taux_lot:
+        st.markdown("#### 📊 Taux réglementaires du lot")
+        afficher_taux(taux_lot, fiche_globale)
+
     st.markdown("---")
 
     lot_label = num_lot.strip() if num_lot.strip() else "[numéro de lot non renseigné]"
@@ -530,17 +611,13 @@ if uploaded:
     st.sidebar.header("Filtres & Export")
     selected = st.sidebar.multiselect("Clients à afficher", options=clients, default=clients)
 
-    # ZIP — tous les clients (utilise dossier vide par défaut pour le ZIP global)
     if st.sidebar.button("⬇️ Télécharger tous les fichiers (ZIP)"):
         zip_buf = io.BytesIO()
         with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
             for client in clients:
                 df_c = data[data["I"] == client].copy()
-                # Récupérer dossier et lot_destination depuis session_state si disponibles
-                dossier_key = f"dossier_{client}"
                 dest_active_key = f"dest_active_{client}"
                 dest_key = f"lot_dest_{client}"
-                # Recalculer les préfixes depuis col D
                 prefixes_c = []
                 for val in df_c["D"].dropna():
                     digits_c = re.sub(r'\D', '', str(val))[:6]
@@ -565,7 +642,6 @@ if uploaded:
         for client in selected:
             df_client = data[data["I"] == client].copy().reset_index(drop=True)
 
-            # Calcul du volume total (colonnes N + O) * 0.001
             volume = (pd.to_numeric(df_client["N"], errors="coerce").fillna(0) +
                       pd.to_numeric(df_client["O"], errors="coerce").fillna(0)).sum() * 0.001
             volume_str = f"{volume:,.3f} MWhc".replace(",", " ")
@@ -574,7 +650,6 @@ if uploaded:
 
             with st.expander(f"🏢 {client}  ({len(df_client)} opération(s)) — {label_volume}", expanded=True):
 
-                # ── Numéro de dossier par client (auto depuis col D) ─────────
                 prefixes = []
                 for val in df_client["D"].dropna():
                     digits = re.sub(r'\D', '', str(val))[:6]
@@ -583,14 +658,10 @@ if uploaded:
                 num_dossier = " / ".join(prefixes) if prefixes else ""
                 st.info(f"📁 Numéro(s) de dossier : **{num_dossier}**" if num_dossier else "📁 Aucun numéro de dossier détecté")
 
-                # ── Lot de destination ───────────────────────────────────────
                 dest_active_key = f"dest_active_{client}"
                 dest_key = f"lot_dest_{client}"
 
-                activer_destination = st.checkbox(
-                    "Spécifier un lot de destination",
-                    key=dest_active_key,
-                )
+                activer_destination = st.checkbox("Spécifier un lot de destination", key=dest_active_key)
                 lot_destination = ""
                 if activer_destination:
                     lot_destination = st.text_input(
@@ -600,21 +671,15 @@ if uploaded:
                     )
 
                 delais_key = f"delais_{client}"
-                delais_courts = st.checkbox(
-                    "⏳ Délai restant pour contrôle < 3 mois",
-                    key=delais_key,
-                )
+                delais_courts = st.checkbox("⏳ Délai restant pour contrôle < 3 mois", key=delais_key)
 
                 filename = build_filename(client, num_dossier, num_lot)
 
                 st.markdown("---")
 
-                # ── Saisie des non-conformités NS via référentiel ────────────
                 extra_cols_fiche, _ = get_fiche_extra_cols(fiche_globale)
                 conclusion_col = extra_cols_fiche[0]
                 ns_adresses = get_ns_adresses(df_client, conclusion_col)
-
-                # Vérifier si toutes les opérations sont "non visité"
                 tous_non_visites = df_client[conclusion_col].astype(str).str.lower().str.strip().eq("non visité").all()
                 ns_adresses_causes = []
 
@@ -623,15 +688,11 @@ if uploaded:
 
                     for i, item in enumerate(ns_adresses):
                         adresse = item["adresse"]
-                        fiche   = item["fiche"]
-
                         st.markdown(f"📍 **{adresse}**")
 
-                        # Utilise la fiche CEE sélectionnée globalement
                         fiche_sel = fiche_globale
                         nc_list = list(NS_REF.get(fiche_sel, {}).keys())
 
-                        # Clé session_state pour le nombre de NC sélectionnées
                         count_key = f"nc_count_{client}_{i}"
                         if count_key not in st.session_state:
                             st.session_state[count_key] = 1
@@ -662,7 +723,6 @@ if uploaded:
 
                     st.markdown("---")
 
-                # ── Message automatique ──────────────────────────────────────
                 message = build_message(taux_choix, lot_label, ns_adresses_causes, lot_destination, delais_courts, tous_non_visites)
 
                 st.markdown("**✉️ Message à envoyer au client :**")
@@ -676,7 +736,6 @@ if uploaded:
 
                 st.markdown("---")
 
-                # ── Export Excel ─────────────────────────────────────────────
                 xlsx_bytes = build_client_excel(df_client, client, lot_destination, fiche_globale)
                 st.download_button(
                     label=f"⬇️ Télécharger Excel — {filename}",
