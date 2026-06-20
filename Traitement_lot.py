@@ -23,8 +23,8 @@ COL_LABELS = {
     "G": "Code postal",
     "H": "Ville",
     "I": "Raison sociale bénéficiaire",
-    "BS": "Conclusion de l'audit",
-    "BY": "Conformité après correction",
+    "BS": "Conclusion du contrôle sur site",
+    "BY": "Conclusion du contrôle par contact",
 }
 
 # ─── Couleurs Excel ──────────────────────────────────────────────────────────
