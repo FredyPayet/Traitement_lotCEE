@@ -214,7 +214,7 @@ def build_message(taux_choix: str, lot_label: str, ns_adresses_causes: list, lot
 
     bloc_delais = ""
     if delais_courts:
-        bloc_delais = "\n\nLa date de fin de travaux est inférieure à 3 mois. Nous ne pouvons plus intégrer le dossier dans un nouveau lot de contrôle pour validation. Merci de nous fournir un document du marché permettant de repousser cette date, ou de nous confirmer l'annulation du dossier."
+        bloc_delais = "\n\nLa date de fin de travaux nous laisse moins de 3 mois pour un nouveau contrôle. Nous ne pouvons plus intégrer le dossier dans un nouveau lot pour validation. Merci de nous fournir un document du marché permettant de repousser cette date, ou de nous confirmer l'annulation du dossier."
 
     fin = f"{bloc_destination}{bloc_delais}\n\nCordialement,"
 
