@@ -208,40 +208,82 @@ def get_col_by_label(fiche: str, label: str) -> str | None:
     return None
 
 
+def get_seuils(fiche: str, annee: int) -> dict:
+    """
+    Retourne les seuils réglementaires (%) selon la fiche et l'année de la date d'engagement.
+    Clés possibles : seuil_s_site, seuil_s_contact (absents si non applicable).
+    """
+    has_site    = get_col_by_label(fiche, "Résultat du contrôle sur site")    is not None
+    has_contact = get_col_by_label(fiche, "Résultat du contrôle par contact") is not None
+
+    # Cas spéciaux fiches EN-101 / EN-103 années 2019-2021 : site uniquement
+    if fiche == "EN-101" and annee in (2019, 2020, 2021):
+        return {"seuil_s_site": 10.0}
+    if fiche == "EN-103" and annee in (2019, 2020, 2021):
+        return {"seuil_s_site": 20.0}
+
+    # EN-102 2021 : site + contact
+    if fiche == "EN-102" and annee == 2021:
+        return {"seuil_s_site": 10.0, "seuil_s_contact": 20.0}
+
+    # Cas avec site ET contact
+    if has_site and has_contact:
+        table = {2022: (7.5, 15.0), 2023: (10.0, 20.0), 2024: (12.5, 25.0)}
+        s, c = table.get(annee, (15.0, 30.0))  # 2025+
+        return {"seuil_s_site": s, "seuil_s_contact": c}
+
+    # Cas contact uniquement
+    if has_contact and not has_site:
+        table_c = {2022: 15.0, 2023: 20.0, 2024: 25.0}
+        c = table_c.get(annee, 30.0)  # 2025+
+        return {"seuil_s_contact": c}
+
+    # Site uniquement sans cas spécial
+    if has_site and not has_contact:
+        table_s = {2022: 7.5, 2023: 10.0, 2024: 12.5}
+        s = table_s.get(annee, 15.0)
+        return {"seuil_s_site": s}
+
+    return {}
+
+
 def compute_taux(data: pd.DataFrame, fiche: str, total_ops: int) -> dict:
     """
     Calcule les taux réglementaires sur l'ensemble du lot.
     Retourne un dict avec les taux disponibles selon la fiche.
     """
     result = {}
-    extra_cols, extra_labels = get_fiche_extra_cols(fiche)
-
     col_site    = get_col_by_label(fiche, "Résultat du contrôle sur site")
     col_contact = get_col_by_label(fiche, "Résultat du contrôle par contact")
 
+    # Année de la date d'engagement la plus récente (col Q)
+    annee = None
+    if "Q" in data.columns:
+        dates_valides = data["Q"].dropna()
+        if not dates_valides.empty:
+            annee = dates_valides.max().year
+    result["annee"] = annee
+    result["seuils"] = get_seuils(fiche, annee) if annee else {}
+
     if col_site and col_site in data.columns:
         vals_site = data[col_site].astype(str).str.lower().str.strip()
-        nb_s_site  = (vals_site == "satisfaisant").sum()
-        nb_ns_site = (vals_site == "non satisfaisant").sum()
-        nb_controles_site = (vals_site != "non visité").sum()
+        nb_s_site         = int((vals_site == "satisfaisant").sum())
+        nb_ns_site        = int((vals_site == "non satisfaisant").sum())
+        nb_controles_site = int((vals_site != "non visité").sum())
 
-        taux_s_site  = nb_s_site  / total_ops * 100 if total_ops > 0 else 0
-        taux_ns_site = nb_ns_site / nb_controles_site * 100 if nb_controles_site > 0 else 0
-
-        result["taux_s_site"]       = taux_s_site
-        result["taux_ns_site"]      = taux_ns_site
-        result["nb_s_site"]         = int(nb_s_site)
-        result["nb_ns_site"]        = int(nb_ns_site)
-        result["nb_controles_site"] = int(nb_controles_site)
+        result["taux_s_site"]       = nb_s_site  / total_ops * 100 if total_ops > 0 else 0
+        result["taux_ns_site"]      = nb_ns_site / nb_controles_site * 100 if nb_controles_site > 0 else 0
+        result["nb_s_site"]         = nb_s_site
+        result["nb_ns_site"]        = nb_ns_site
+        result["nb_controles_site"] = nb_controles_site
+        result["total_ops"]         = total_ops
 
     if col_contact and col_contact in data.columns:
         vals_contact = data[col_contact].astype(str).str.lower().str.strip()
-        nb_s_contact = (vals_contact == "satisfaisant").sum()
+        nb_s_contact = int((vals_contact == "satisfaisant").sum())
 
-        taux_s_contact = nb_s_contact / total_ops * 100 if total_ops > 0 else 0
-
-        result["taux_s_contact"] = taux_s_contact
-        result["nb_s_contact"]   = int(nb_s_contact)
+        result["taux_s_contact"] = nb_s_contact / total_ops * 100 if total_ops > 0 else 0
+        result["nb_s_contact"]   = nb_s_contact
 
     return result
 
@@ -295,7 +337,7 @@ def extract_tables(df: pd.DataFrame, fiche: str = "EN-101"):
 
     extra_cols, _ = get_fiche_extra_cols(fiche)
     base_cols = ["D", "E", "F", "G", "H", "I"]
-    all_col_letters = base_cols + extra_cols + ["N", "O"]
+    all_col_letters = base_cols + extra_cols + ["N", "O", "Q"]
     needed_cols = [col_letter_to_idx(l) for l in all_col_letters]
 
     if max(needed_cols) >= df.shape[1]:
@@ -315,6 +357,8 @@ def extract_tables(df: pd.DataFrame, fiche: str = "EN-101"):
 
     for col in ["N", "O"]:
         data_raw[col] = pd.to_numeric(data_raw[col], errors="coerce").fillna(0)
+
+    data_raw["Q"] = pd.to_datetime(data_raw["Q"], errors="coerce")
 
     clients = sorted(data_raw["I"].dropna().unique().tolist())
     return data_raw.reset_index(drop=True), clients
@@ -505,47 +549,67 @@ def copy_button(text: str, key: str):
 
 def afficher_taux(taux: dict, fiche: str):
     """Affiche les indicateurs de taux dans la section informations du lot."""
-    extra_cols, extra_labels = get_fiche_extra_cols(fiche)
     has_site    = "taux_s_site"    in taux
     has_contact = "taux_s_contact" in taux
+    seuils      = taux.get("seuils", {})
+    annee       = taux.get("annee")
 
-    cols = st.columns(3 if (has_site and has_contact) else (2 if has_site or has_contact else 1))
+    if annee:
+        st.caption(f"📅 Date d'engagement la plus récente : **{annee}** — seuils appliqués : "
+                   + (f"S site ≥ {seuils.get('seuil_s_site', '—')} %" if 'seuil_s_site' in seuils else "")
+                   + ("  |  " if 'seuil_s_site' in seuils and 'seuil_s_contact' in seuils else "")
+                   + (f"S contact ≥ {seuils.get('seuil_s_contact', '—')} %" if 'seuil_s_contact' in seuils else ""))
+
+    nb_cartes = sum([has_site * 2, has_contact])  # site → 2 cartes (S + NS), contact → 1
+    cols = st.columns(nb_cartes if nb_cartes > 0 else 1)
     col_idx = 0
 
     if has_site:
-        color_s  = "#C6EFCE" if taux["taux_s_site"]  >= 90 else "#FFCCCC"
-        color_ns = "#C6EFCE" if taux["taux_ns_site"] <= 10 else "#FFCCCC"
+        seuil_s  = seuils.get("seuil_s_site",  0)
+        seuil_ns = 10.0  # Toujours 10 % pour NS
+
+        ok_s  = taux["taux_s_site"]  >= seuil_s
+        ok_ns = taux["taux_ns_site"] <= seuil_ns
+        total = taux.get("total_ops", taux["nb_s_site"] + taux["nb_ns_site"])
 
         with cols[col_idx]:
+            color = "#C6EFCE" if ok_s else "#FFCCCC"
+            icone = "✅" if ok_s else "❌"
             st.markdown(
-                f"<div style='background:{color_s};padding:12px;border-radius:8px;text-align:center'>"
-                f"<b>Taux S sur site</b><br>"
+                f"<div style='background:{color};padding:12px;border-radius:8px;text-align:center'>"
+                f"<b>Taux S sur site</b> {icone}<br>"
                 f"<span style='font-size:22px;font-weight:bold'>{taux['taux_s_site']:.1f} %</span><br>"
-                f"<small>{taux['nb_s_site']} S / {taux['nb_s_site'] + taux['nb_ns_site'] + (taux.get('nb_controles_site',0) - taux['nb_s_site'] - taux['nb_ns_site'])} opérations</small>"
+                f"<small>{taux['nb_s_site']} S / {total} opérations — seuil ≥ {seuil_s} %</small>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
         col_idx += 1
 
         with cols[col_idx]:
+            color = "#C6EFCE" if ok_ns else "#FFCCCC"
+            icone = "✅" if ok_ns else "❌"
             st.markdown(
-                f"<div style='background:{color_ns};padding:12px;border-radius:8px;text-align:center'>"
-                f"<b>Taux NS sur site</b><br>"
+                f"<div style='background:{color};padding:12px;border-radius:8px;text-align:center'>"
+                f"<b>Taux NS sur site</b> {icone}<br>"
                 f"<span style='font-size:22px;font-weight:bold'>{taux['taux_ns_site']:.1f} %</span><br>"
-                f"<small>{taux['nb_ns_site']} NS / {taux['nb_controles_site']} contrôlées</small>"
+                f"<small>{taux['nb_ns_site']} NS / {taux['nb_controles_site']} contrôlées — seuil ≤ {seuil_ns} %</small>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
         col_idx += 1
 
     if has_contact:
-        color_c = "#C6EFCE" if taux["taux_s_contact"] >= 90 else "#FFCCCC"
+        seuil_c = seuils.get("seuil_s_contact", 0)
+        ok_c    = taux["taux_s_contact"] >= seuil_c
+        total   = taux.get("total_ops", 0)
+        icone   = "✅" if ok_c else "❌"
         with cols[col_idx]:
+            color = "#C6EFCE" if ok_c else "#FFCCCC"
             st.markdown(
-                f"<div style='background:{color_c};padding:12px;border-radius:8px;text-align:center'>"
-                f"<b>Taux S par contact</b><br>"
+                f"<div style='background:{color};padding:12px;border-radius:8px;text-align:center'>"
+                f"<b>Taux S par contact</b> {icone}<br>"
                 f"<span style='font-size:22px;font-weight:bold'>{taux['taux_s_contact']:.1f} %</span><br>"
-                f"<small>{taux['nb_s_contact']} S / {len(extra_cols)} col. contact</small>"
+                f"<small>{taux['nb_s_contact']} S / {total} opérations — seuil ≥ {seuil_c} %</small>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
@@ -591,10 +655,10 @@ if uploaded:
     st.success(f"✅ Fichier chargé — **{len(data)}** ligne(s) · **{len(clients)}** client(s) détecté(s)")
 
     # ── Indicateurs de taux du lot ───────────────────────────────────────────
-    total_ops = len(data)
+    total_ops = int(data["D"].notna().sum() - (data["D"].astype(str).str.strip() == "").sum())
     taux_lot = compute_taux(data, fiche_globale, total_ops)
     if taux_lot:
-        st.markdown("#### 📊 Taux réglementaires du lot")
+        st.markdown(f"#### 📊 Taux réglementaires du lot — **{total_ops} opération(s)**")
         afficher_taux(taux_lot, fiche_globale)
 
     st.markdown("---")
