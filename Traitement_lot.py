@@ -342,17 +342,38 @@ if uploaded:
                 ns_adresses_causes = []
 
                 if ns_adresses:
-                    st.markdown("**⚠️ Opérations non satisfaisantes — saisir la/les cause(s) :**")
+                    st.markdown("**⚠️ Opérations non satisfaisantes — saisir les non-conformités :**")
+
                     for i, adresse in enumerate(ns_adresses):
-                        cause_raw = st.text_input(
-                            f"Cause(s) pour : {adresse}",
-                            placeholder="ex : Épaisseur insuffisante. Pare-vapeur manquant.",
-                            key=f"cause_{client}_{i}",
-                            help="Séparez plusieurs causes par un point ou un point-virgule.",
-                        )
-                        # Découper les causes sur . ou ;
-                        causes = [c.strip() for c in re.split(r'[.;]+', cause_raw) if c.strip()]
+                        # Clé session_state pour le nombre de champs de cette adresse
+                        count_key = f"nc_count_{client}_{i}"
+                        if count_key not in st.session_state:
+                            st.session_state[count_key] = 1
+
+                        st.markdown(f"📍 **{adresse}**")
+
+                        causes = []
+                        for j in range(st.session_state[count_key]):
+                            col_input, col_btn = st.columns([10, 1])
+                            with col_input:
+                                val = st.text_input(
+                                    f"• Non-conformité {j + 1}",
+                                    placeholder="ex : Épaisseur insuffisante",
+                                    key=f"nc_{client}_{i}_{j}",
+                                    label_visibility="collapsed",
+                                )
+                                if val.strip():
+                                    causes.append(val.strip())
+                            # Bouton + uniquement sur la dernière ligne
+                            if j == st.session_state[count_key] - 1:
+                                with col_btn:
+                                    if st.button("➕", key=f"add_{client}_{i}_{j}", help="Ajouter une non-conformité"):
+                                        st.session_state[count_key] += 1
+                                        st.rerun()
+
                         ns_adresses_causes.append((adresse, causes))
+                        st.markdown("")
+
                     st.markdown("---")
 
                 # ── Message automatique ──────────────────────────────────────
